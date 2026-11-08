@@ -624,6 +624,43 @@ circuitos en vivo vale oro cuando se está construyendo la capa onion. Por eso s
 
 - **Sybil/spam:** PoW argon2id para publicar nombres, descriptores y keywords; rate limit por
   circuito; cuotas de almacenamiento DHT.
+
+> **⚠ Parámetros del PoW, fijados con mediciones de M2.** El plan decía "PoW argon2id" sin
+> parámetros, y al implementarlo apareció un factor que no estaba considerado: **verificar es
+> superficie de DoS**. Cada nodo del DHT tiene que verificar cada registro que le ofrecen, así que
+> un PoW caro de verificar es un arma apuntando a los nodos honestos.
+>
+> argon2id es **simétrico**: un intento de resolución y una verificación cuestan lo mismo. La
+> asimetría útil viene de los **bits de dificultad** (resolver = 2^bits intentos, verificar = 1),
+> no de la dureza en memoria. Medido en 1 núcleo:
+>
+> | memoria | ms/hash | bits para ~0,4 s | verificaciones/s | asimetría |
+> |---|---|---|---|---|
+> | 8 KiB | 0,118 | 12 | 8.465 | 4.096× |
+> | 64 KiB | 0,296 | 10 | 3.373 | 1.024× |
+> | **256 KiB** | **0,911** | **9** | **1.097** | **512×** |
+> | 1 MiB | 3,385 | 7 | 295 | 128× |
+> | 4 MiB | 13,403 | 5 | 75 | 32× |
+>
+> **Elegido: 256 KiB, `opslimit=1`.** Es donde la dureza en memoria sigue siendo real (32× el
+> mínimo de PyNaCl, el paralelismo en GPU no es gratis) y un nodo aún verifica más de mil registros
+> por segundo. Más a la derecha, la verificación se desploma y la dureza extra cuesta más de lo que
+> compra.
+>
+> Dificultad por tipo de registro, porque el recurso escaso no es el mismo:
+>
+> | Registro | Bits | Resolver (esperado) | Por qué |
+> |---|---|---|---|
+> | Descriptor de relevo | 9 | ~0,5 s | lo renueva cada relevo cada hora |
+> | Descriptor de servicio | 9 | ~0,5 s | se renueva dentro de su TTL |
+> | Entrada de keyword | 11 | ~1,9 s | **es el vector de spam directo** (§8); un sitio con 10 palabras paga ~19 s |
+> | Registro de nombre | 14 | ~15 s | first-come sobre un espacio global y escaso |
+>
+> **Y el desalojo puntúa por el trabajo realmente hecho, no por la dificultad que el tipo exige.**
+> Son cosas distintas: el valor exigido vive en una tabla global que una actualización de protocolo
+> podría cambiar, y eso reescribiría retroactivamente la posición de todo lo ya almacenado. Los
+> bits reales son una propiedad del registro, se miden con un solo hash y solo suben haciendo más
+> trabajo.
 - **Moderación sin censura central:** listas de bloqueo firmadas y suscribibles. Cada usuario
   elige curadores; ninguna lista es obligatoria ni global.
 - **Política de relay:** opt-in, con límites de ancho de banda y de conexiones que fija el
@@ -1064,7 +1101,7 @@ circuitos que no responden, enlaces con timeout y HUD colgado:
 
 | Qué | Coste | Dónde va |
 |---|---|---|
-| **PoW argon2id** | el propio HUD muestra `pow 0.4s` | `ProcessPoolExecutor`, sin excepción. 400 ms de bucle congelado tira circuitos vivos |
+| **PoW argon2id** | el propio HUD muestra `pow 0.4s` | Fuera del bucle, sin excepción: 400 ms congelados tiran circuitos vivos. **Medido en M2: basta un `ThreadPoolExecutor`** — libsodium libera el GIL (3,69× en 4 hilos, casi lineal) y el bucle se retrasa como máximo ~5 ms. Nada de `ProcessPoolExecutor`: sin pickling, sin riesgos de spawn/fork y sin exigir que el módulo principal sea reimportable. Además, repartir la búsqueda entre hilos divide el tiempo por N: un nombre de 14 bits baja de ~15 s a ~4 s en cuatro núcleos |
 | **SQLite / FTS5** | decenas de ms en un índice grande | Hilo escritor dedicado + modo **WAL** + lecturas en executor |
 | Ficheros de `~/.nullcell/` | variable; discos de red y carpetas sincronizadas pueden ser lentísimos | executor de hilos |
 
