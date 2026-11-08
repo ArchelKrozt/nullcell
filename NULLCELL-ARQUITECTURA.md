@@ -840,10 +840,35 @@ unidad de protocolo es siempre **marco**, nunca celda, para que no haya ambigüe
 
 ### Carpeta del repositorio — resuelto
 
-El proyecto vive en
-`~/Library/Mobile Documents/com~apple~CloudDocs/RodentTech/nullcell/`, **en minúsculas**, igual que
-el paquete de PyPI y el futuro repositorio de GitHub. Es ya un repositorio git con el código de
-M0+M1 dentro, y este documento vive en su raíz como `NULLCELL-ARQUITECTURA.md`.
+El repositorio vive **en minúsculas**, igual que el paquete de PyPI y el futuro repositorio de
+GitHub, dentro de la carpeta de trabajo que ya existía:
+
+```
+RodentTech/
+└── RED-NULLCELL-P2P/              ← abrir el editor AQUÍ
+    └── nullcell/                  ← raíz del repositorio git
+        ├── nullcell/              paquete Python
+        ├── tests/  bench/  docs/  .github/
+        ├── NULLCELL-ARQUITECTURA.md
+        └── pyproject.toml
+```
+
+Se eligió anidar en lugar de renombrar la carpeta exterior porque **el historial de sesiones del
+editor se indexa por la ruta absoluta del proyecto**: renombrar la carpeta exterior lo habría
+dejado huérfano. El nivel `RED-NULLCELL-P2P/` sobra conceptualmente y se conserva solo por eso.
+Para GitHub es invisible: el repositorio empieza en `nullcell/`.
+
+> **⚠ Trampa real, nos pasó al montar esto.** Mover una carpeta llamada `nullcell` dentro de otra
+> que pasaba a llamarse `nullcell`, **en iCloud Drive**, hizo que la sincronización resolviera la
+> colisión renombrando el paquete a `nullcell 2/`. Resultado inmediato: `ncell` dejó de importar y
+> `pytest` no pudo ni recoger las pruebas.
+>
+> Se recuperó sin pérdidas **porque el commit era anterior al movimiento**: un `git status` mostró
+> los 13 ficheros como borrados más un `nullcell 2/` sin rastrear, y renombrar de vuelta devolvió
+> el árbol byte a byte. Dos lecciones que valen para cualquier movimiento de este repositorio:
+> **commitear antes de mover**, y **`git status` justo después** — es el detector de duplicados de
+> iCloud. El riesgo era de la transición, no permanente: la estructura anidada ya asentada se
+> sincroniza sin problema.
 
 **Aviso, por lo de §12:** la carpeta está dentro de iCloud Drive. Para el documento es cómodo; para
 el repositorio de código es tolerable pero molesto (iCloud sincroniza `.git/` y `__pycache__`), y
