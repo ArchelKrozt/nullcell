@@ -42,6 +42,10 @@ python3 -m venv ~/.venvs/nullcell          # fuera de carpetas sincronizadas
 ~/.venvs/nullcell/bin/pip install -e ".[dev]"
 ```
 
+> Si mueves o renombras la carpeta del proyecto, **reinstala**: una instalación editable graba la
+> ruta absoluta en el entorno virtual y `ncell` deja de funcionar hasta que corras
+> `pip install -e .` desde la ruta nueva.
+
 > **No pongas `~/.nullcell/` en iCloud, Dropbox ni OneDrive.** Sincronizar `identity.key` saca tu
 > clave privada de la máquina y sincronizar las bases SQLite las corrompe. `ncell` avisa si lo
 > detecta.

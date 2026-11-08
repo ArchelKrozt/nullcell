@@ -838,19 +838,28 @@ Son sinónimos en la documentación: **"celda" es el término de la interfaz y d
 ("tu celda", "1.2k celdas activas"), y "nodo" se usa libremente en prosa técnica por claridad. La
 unidad de protocolo es siempre **marco**, nunca celda, para que no haya ambigüedad.
 
-### Carpeta del repositorio — pendiente, la crea el usuario
+### Carpeta del repositorio — resuelto
 
-Este documento vive ahora en
-`~/Library/Mobile Documents/com~apple~CloudDocs/RodentTech/RED-NULLCELL-P2P/NULLCELL-ARQUITECTURA.md`,
-que es la carpeta de trabajo actual. **Todavía no es un repositorio git** y no contiene código: el
-único fichero es este documento.
-
-Pendiente de decidir: renombrar la carpeta a **`nullcell`** en minúsculas —igual que el paquete de
-PyPI y el futuro repositorio— o actualizar este párrafo y quedarse con `RED-NULLCELL-P2P`. Y en
-cualquier caso `git init` antes de escribir la primera línea de código.
+El proyecto vive en
+`~/Library/Mobile Documents/com~apple~CloudDocs/RodentTech/nullcell/`, **en minúsculas**, igual que
+el paquete de PyPI y el futuro repositorio de GitHub. Es ya un repositorio git con el código de
+M0+M1 dentro, y este documento vive en su raíz como `NULLCELL-ARQUITECTURA.md`.
 
 **Aviso, por lo de §12:** la carpeta está dentro de iCloud Drive. Para el documento es cómodo; para
-el repositorio de código y sobre todo para `~/.nullcell/` **no** — ver el aviso de ubicación en §12.
+el repositorio de código es tolerable pero molesto (iCloud sincroniza `.git/` y `__pycache__`), y
+para `~/.nullcell/` **no** — ver el aviso de ubicación en §12. El estado del nodo vive fuera, en
+`~/.nullcell/`, y el entorno virtual también, en `~/.venvs/nullcell/`.
+
+**Trampa al mover o renombrar la carpeta:** una instalación editable (`pip install -e .`) graba la
+ruta absoluta del proyecto dentro del entorno virtual, así que mover o renombrar la carpeta **rompe
+el comando `ncell`** hasta reinstalar:
+
+```bash
+cd <nueva-ruta> && ~/.venvs/nullcell/bin/pip install -e .
+```
+
+Está anotado aquí porque el síntoma —`ncell` que deja de existir, o importa el paquete viejo— no
+apunta a su causa por ningún lado.
 
 Estado del directorio `RodentTech/` que hay que limpiar a mano:
 
