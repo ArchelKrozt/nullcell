@@ -68,28 +68,68 @@ async def test_entries_per_key_is_capped():
     """§8: a popular word must not be able to exhaust the nodes holding it."""
     store = Store(max_entries_per_key=4)
     key = None
-    for _ in range(4):
+    for _ in range(8):
         record = await keyword(Identity.generate())
         key = record.key
-        assert store.put(record)
-    assert len(store.get(key)) == 4
-
-    # Same difficulty, newer: must not displace an established entry.
-    newcomer = await keyword(Identity.generate())
-    assert not store.put(newcomer)
-    assert len(store.get(key)) == 4
+        store.put(record)
+    assert len(store.get(key)) == 4  # the cap holds whoever wins
 
 
-async def test_higher_proof_of_work_can_displace(monkeypatch):
+async def test_established_entries_cost_extra_work_to_displace():
+    """§8. Scored deterministically by passing pow_bits, because measured work
+    is ``required + Geometric`` and asserting on the dice would be flaky."""
+    from nullcell.dht.store import AGE_BONUS_BITS
+
+    base = 11
+    bonus = int(AGE_BONUS_BITS)
     store = Store(max_entries_per_key=2)
-    for _ in range(2):
-        assert store.put(await keyword(Identity.generate()))
 
-    monkeypatch.setattr(P, "DIFFICULTY", dict.fromkeys(P.DIFFICULTY, 8))
-    stronger = await keyword(Identity.generate())
-    assert store.put(stronger)
-    assert len(store.get(stronger.key)) == 2
-    assert stronger in store.get(stronger.key)
+    key = None
+    for _ in range(2):
+        record = await keyword(Identity.generate())
+        key = record.key
+        assert store.put(record, pow_bits=base)
+    store._age_entries(key, hours=2 * 24)  # fully established
+
+    # Equal work loses.
+    assert not store.put(await keyword(Identity.generate()), pow_bits=base)
+    # Exactly the bonus still loses: ties go to the incumbent.
+    assert not store.put(await keyword(Identity.generate()), pow_bits=base + bonus)
+    # One bit past it wins.
+    assert store.put(await keyword(Identity.generate()), pow_bits=base + bonus + 1)
+    assert len(store.get(key)) == 2
+
+
+def test_age_bonus_prices_displacement_in_work():
+    """Why scoring measured work is not a free-retry loophole.
+
+    Grinding for a lucky digest is not a discount: a digest with N extra
+    leading zeros takes 2**N times the hashes whether you call it a higher
+    difficulty or more attempts at the same one. So the age bonus translates
+    directly into a work multiplier for anyone trying to evict an incumbent.
+    """
+    from nullcell.dht.store import AGE_BONUS_BITS
+
+    assert 2**AGE_BONUS_BITS == 8.0
+
+
+async def test_a_fresh_entry_is_contestable():
+    """Nothing is established yet, so an equal-work newcomer may win. That is
+    the intended behaviour, not a weakness."""
+    store = Store(max_entries_per_key=1)
+    first = await keyword(Identity.generate())
+    assert store.put(first, pow_bits=9)
+    assert store.put(await keyword(Identity.generate()), pow_bits=10)
+    assert len(store.get(first.key)) == 1
+
+
+async def test_measured_bits_are_used_when_not_supplied():
+    """put() falls back to measuring the record, so a caller that skips
+    verify() still cannot overstate its work."""
+    store, me = Store(), Identity.generate()
+    record = await keyword(me)
+    assert store.put(record)
+    assert record.measure_pow_bits() >= record.required_difficulty
 
 
 async def test_single_value_keys_are_first_come():

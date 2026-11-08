@@ -25,11 +25,29 @@ from typing import Final
 
 from nullcell.dht.records import Record, RecordType
 
-__all__ = ["MAX_BYTES", "MAX_ENTRIES_PER_KEY", "MAX_KEYS", "Store", "StoreFull"]
+__all__ = [
+    "AGE_BONUS_BITS",
+    "AGE_BONUS_HOURS",
+    "MAX_BYTES",
+    "MAX_ENTRIES_PER_KEY",
+    "MAX_KEYS",
+    "Store",
+    "StoreFull",
+]
 
 MAX_ENTRIES_PER_KEY: Final[int] = 256
 MAX_KEYS: Final[int] = 100_000
 MAX_BYTES: Final[int] = 64 * 1024 * 1024
+
+#: How much being established is worth, in proof-of-work bits, and over how
+#: long it accrues. This is not a free parameter: measured work is
+#: ``required_bits + Geometric``, so roughly half of fresh proofs at the same
+#: nominal difficulty measure higher than any given one by luck alone. Without
+#: an age bonus that exceeds that noise, an attacker displaces established
+#: entries for free about half the time. At 3 bits over 24 h, evicting a
+#: day-old entry costs 8x the work it paid.
+AGE_BONUS_BITS: Final[float] = 3.0
+AGE_BONUS_HOURS: Final[float] = 24.0
 
 #: Only these types may have many entries under one key. A relay or service
 #: descriptor is keyed by its own routing key, so there is exactly one.
@@ -47,21 +65,26 @@ class _Entry:
     stored_at: float
     pow_bits: int
 
-    @property
-    def score(self) -> float:
-        """Eviction score — higher survives.
+    def score_at(self, now: float) -> float:
+        """Eviction score at instant *now* — higher survives.
 
         Scores the work **actually done** on the record, not the difficulty its
         type requires: the required value lives in a global table that a
         protocol update could change, and that would retroactively rewrite the
         standing of everything already stored.
 
-        Work dominates, with a bounded bonus for having been around a while.
-        Equal work means an established entry outranks a newcomer, so a spammer
-        cannot displace anyone without paying strictly more than they did.
+        Work dominates, with a bounded bonus for having been around a while
+        (:data:`AGE_BONUS_BITS`). An established entry therefore outranks a
+        newcomer that merely got a lucky digest, and displacing it costs real
+        extra work rather than a coin flip.
+
+        *now* is passed in rather than read here because every score in one
+        comparison has to come from the same instant. Reading the clock per
+        entry gave a brand-new candidate a few microseconds of age bonus, which
+        was enough to win ties it should have lost.
         """
-        age_hours = min((time.time() - self.stored_at) / 3600.0, 24.0)
-        return self.pow_bits + age_hours * 0.1
+        age_hours = min(max(0.0, (now - self.stored_at) / 3600.0), AGE_BONUS_HOURS)
+        return self.pow_bits + AGE_BONUS_BITS * age_hours / AGE_BONUS_HOURS
 
 
 class Store:
@@ -100,6 +123,7 @@ class Store:
         blob = record.encode() if blob is None else blob
         if pow_bits is None:
             pow_bits = record.measure_pow_bits()
+        now = time.time()
         entries = self._by_key.get(record.key)
 
         if entries is None:
@@ -112,7 +136,7 @@ class Store:
         if previous is None and self._bytes + delta > self.max_bytes:
             raise StoreFull(f"byte quota reached ({self.max_bytes})")
 
-        new_entry = _Entry(record=record, blob=blob, stored_at=time.time(), pow_bits=pow_bits)
+        new_entry = _Entry(record=record, blob=blob, stored_at=now, pow_bits=pow_bits)
 
         if previous is not None:
             # Republication by the same publisher: refresh in place, but never
@@ -130,8 +154,8 @@ class Store:
             return False
 
         if len(entries) >= self.max_entries_per_key:
-            weakest_pub, weakest = min(entries.items(), key=lambda kv: kv[1].score)
-            if new_entry.score <= weakest.score:
+            weakest_pub, weakest = min(entries.items(), key=lambda kv: kv[1].score_at(now))
+            if new_entry.score_at(now) <= weakest.score_at(now):
                 return False
             del entries[weakest_pub]
             self._bytes -= len(weakest.blob)
@@ -177,6 +201,11 @@ class Store:
             if not entries:
                 del self._by_key[key]
         return dropped
+
+    def _age_entries(self, key: bytes, hours: float) -> None:
+        """Backdate every entry under *key*. Test seam, not protocol."""
+        for entry in self._by_key.get(key, {}).values():
+            entry.stored_at -= hours * 3600.0
 
     @property
     def stats(self) -> dict[str, int]:

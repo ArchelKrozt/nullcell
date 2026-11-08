@@ -295,7 +295,15 @@ dirección: ver §3) guarda dos tipos de registro firmado:
 - **Descriptor de servicio**: intro points (§6) + metadatos para el buscador (§8).
 
 **Entrada a la red:** `bootstrap.json` embebido → `~/.nullcell/peers.db` (sesión anterior) →
-**mDNS** en LAN → **PEX** con los peers conocidos.
+**descubrimiento en LAN** → **PEX** con los peers conocidos.
+
+> **Nota de implementación (M2):** lo que llamábamos "mDNS" se implementó como una **baliza UDP
+> multicast propia** con anuncio firmado, en un grupo y puerto de Nullcell, no como mDNS/DNS-SD
+> estándar. Se dice claro porque la diferencia importa: no aparece en `dns-sd` ni en navegadores
+> Bonjour, y a cambio no añade la dependencia de zeroconf. DNS-SD de verdad se puede montar encima
+> más adelante sin tocar nada más. Va **desactivada por defecto**: anunciar en la red local que
+> esta máquina corre un nodo Nullcell es útil en un laboratorio y una revelación innecesaria en
+> cualquier otro sitio.
 
 **Selección de los 3 saltos, sin autoridad central:**
 - **Guards pinned:** el salto 1 se fija durante semanas (2–3 guards). Rotar el primer salto
@@ -330,6 +338,11 @@ presupuestarla desde el principio en lugar de descubrirla en M5:
 | Un lookup completo (O(log n), ~3-5 saltos, α=3 en paralelo) | **1-3 s** |
 | Búsqueda de 5 palabras clave | 5 lookups **concurrentes**, no en serie ≈ **1-3 s** en total |
 | Resolver un nombre y abrir el portal | lookup + rendezvous ≈ **3-5 s** en frío |
+
+> **Medido en M2.** Sin circuitos, sobre loopback y con 30 celdas, una búsqueda completa
+> (3-5 saltos de Kademlia con α=3) tarda **7 ms de mediana**. Es decir: el presupuesto de 1-3 s de
+> arriba es **casi todo coste de circuito**, no del DHT. La lógica de Kademlia no es el problema;
+> los 300-800 ms por salto sí, y por eso las tres mitigaciones de abajo no son opcionales.
 
 Tres mitigaciones, las tres necesarias:
 
@@ -992,6 +1005,7 @@ techo del transporte**, que sí mide nuestro código.
 | **M1** | marcos/s empaquetados por la capa de marcos, 1 núcleo | **≥ 500.000** · *medido: 2.280.000* | `bench/link_throughput.py` |
 | **M1** | eficiencia del enlace sobre el techo crudo de QUIC | **≥ 85 %** · *medido: 91,8 %* | ídem, contra `bench_raw_ceiling` |
 | **M1** | asignaciones por marco en la ruta caliente | **< 1 byte** · *medido: 0,04* | `tracemalloc` en estado estable |
+| **M2** | búsqueda remota en malla de 30 celdas, loopback sin circuitos | **≤ 100 ms** · *medido: 7 ms de mediana* | `tests/integration/test_dht.py` |
 | **M3** | construcción de circuito de 3 saltos, red local | **≤ 150 ms** | `bench/circuit_build.py` en `nullcell-lab` |
 | **M3** | throughput por circuito, 3 saltos locales | **≥ 5 MB/s** | ídem |
 | **M3** | marcos/s reenviados por un relevo, 1 núcleo | **≥ 60.000** | `bench/relay_forward.py` |

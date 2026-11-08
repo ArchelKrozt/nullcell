@@ -57,7 +57,19 @@ async def open_link(
         port,
         configuration=client_configuration(),
         create_protocol=FrameProtocol,
+        # We wait on our own HandshakeCompleted future instead (below).
+        # aioquic's wait_connected would be a second, redundant wait on a
+        # future it keeps internally, and when a connection dies before that
+        # future is retrieved aioquic sets ConnectionError on it with nobody
+        # listening (aioquic/asyncio/protocol.py:217) — which surfaces as
+        # "Future exception was never retrieved" on every torn-down link.
+        #
+        # The catch: aioquic passes `transmit=wait_connected` to connect(), so
+        # with it False the initial packet is never sent (the flag exists for
+        # 0-RTT, where the caller sends data first). We transmit ourselves.
+        wait_connected=False,
     ) as proto:
+        proto.transmit()
         await proto.handshake_done
 
         if verify:

@@ -7,6 +7,7 @@ asymmetry is what keeps a client anonymous at the link layer already.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Final
 
 from aioquic.asyncio import serve
@@ -39,16 +40,28 @@ def server_configuration(identity: Identity) -> QuicConfiguration:
 class Listener:
     """A listening Nullcell node."""
 
-    def __init__(self, identity: Identity, host: str = "::", port: int = 4433) -> None:
+    def __init__(
+        self,
+        identity: Identity,
+        host: str = "::",
+        port: int = 4433,
+        *,
+        on_link: Callable[[FrameProtocol], None] | None = None,
+    ) -> None:
         self.identity = identity
         self.host = host
         self.port = port
         self._server = None
         self.links: list[FrameProtocol] = []
+        #: Called for every accepted link, so a service (the DHT in M2) can
+        #: attach its own message handling without this class knowing about it.
+        self.on_link = on_link
 
     def _factory(self, *args, **kwargs) -> FrameProtocol:
         proto = FrameProtocol(*args, **kwargs)
         self.links.append(proto)
+        if self.on_link is not None:
+            self.on_link(proto)
         # No proactive greeting: the side that *initiated* the link opens the
         # stream and sends VERSIONS first, and we answer on that same stream
         # (§5). Greeting first would have both ends open a stream of their own.

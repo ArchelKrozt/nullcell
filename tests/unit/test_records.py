@@ -61,20 +61,46 @@ async def test_tampered_body_rejected(me):
         R.verify(tampered)
 
 
-async def test_proof_of_work_cannot_be_lifted_onto_another_record(me):
-    """Signature and PoW cover the same bytes, so a nonce does not transfer."""
-    a = await R.build(me, R.RecordType.RELAY, relay_body(me))
-    b = await R.build(me, R.RecordType.RELAY, {**relay_body(me), "bw": 999})
-    forged = R.Record(b.type, b.key, b.pub, b.ts, b.ttl, b.body, a.nonce, b.sig)
-    with pytest.raises(R.RecordPowError):
-        R.verify(forged)
+async def test_proof_of_work_cannot_be_lifted_onto_another_record(me, monkeypatch):
+    """Signature and PoW cover the same bytes, so a nonce does not transfer.
+
+    This one test raises the difficulty above the suite default: a borrowed
+    nonce still passes by chance with probability ``2**-bits``, which at the
+    3 bits the other tests use is one run in eight. At 10 bits across three
+    independent forgeries the flake probability is about 1e-9.
+    """
+    monkeypatch.setattr(P, "DIFFICULTY", dict.fromkeys(P.DIFFICULTY, 10))
+
+    for i in range(3):
+        a = await R.build(me, R.RecordType.RELAY, {**relay_body(me), "bw": i})
+        b = await R.build(me, R.RecordType.RELAY, {**relay_body(me), "bw": 1000 + i})
+        assert a.unsigned_bytes() != b.unsigned_bytes()
+
+        forged = R.Record(b.type, b.key, b.pub, b.ts, b.ttl, b.body, a.nonce, b.sig)
+        with pytest.raises(R.RecordPowError):
+            R.verify(forged)
 
 
-async def test_missing_proof_of_work_rejected(me):
-    good = await R.build(me, R.RecordType.RELAY, relay_body(me))
+async def test_insufficient_proof_of_work_rejected(me, monkeypatch):
+    """Built at the suite's 3 bits, then judged against 24. Deterministic, and
+    it doubles as the test for a protocol update raising the difficulty: old
+    records stop being accepted."""
+    record = await R.build(me, R.RecordType.RELAY, relay_body(me))
+    R.verify(record)
+
+    monkeypatch.setattr(P, "DIFFICULTY", dict.fromkeys(P.DIFFICULTY, 24))
+    with pytest.raises(R.RecordPowError, match="needs 24"):
+        R.verify(record)
+
+
+async def test_zeroed_nonce_rejected(me, monkeypatch):
+    """Build cheap, judge at 24 bits. Raising the difficulty *before* building
+    would make build() search for a 2**24 solution — about an hour."""
+    good = await R.build(me, R.RecordType.RELAY, relay_body(me), ttl=60)
     naked = R.Record(
         good.type, good.key, good.pub, good.ts, good.ttl, good.body, b"\x00" * 16, good.sig
     )
+    monkeypatch.setattr(P, "DIFFICULTY", dict.fromkeys(P.DIFFICULTY, 24))
     with pytest.raises(R.RecordPowError):
         R.verify(naked)
 

@@ -172,3 +172,186 @@ def cmd_ping(
 
 if __name__ == "__main__":
     app()
+
+
+# --------------------------------------------------------------------- DHT (M2)
+def _parse_seed(spec: str):
+    """``<nid>@host:port`` -> Node."""
+    from nullcell.dht.routing_table import Node
+    from nullcell.net.link_manager import parse_endpoint
+
+    nid, _, endpoint = spec.partition("@")
+    if not endpoint:
+        raise typer.BadParameter("un seed es <nid>@host:puerto")
+    address = ids.decode_nid(nid)
+    parse_endpoint(endpoint)  # validate now, fail clearly
+    return Node(pub=address.pub, endpoints=[endpoint])
+
+
+def _seeds(specs: list[str] | None):
+    from nullcell.discovery.bootstrap import load_bootstrap, load_peers
+
+    cfg = config.load()
+    nodes = list(load_bootstrap()) + list(load_peers(cfg.path_peers))
+    for spec in specs or []:
+        nodes.append(_parse_seed(spec))
+    return nodes
+
+
+async def _transient_node(identity, seeds):
+    """A short-lived client node: bootstrap, do one thing, go away."""
+    from nullcell.dht.kademlia import KademliaNode
+    from nullcell.dht.transport import DirectTransport
+
+    node = KademliaNode(identity, DirectTransport())
+    if not seeds:
+        typer.secho(
+            "✗ sin semillas. Usa --seed <nid>@host:puerto, o rellena bootstrap.json",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    known = await node.bootstrap(seeds)
+    if known == 0:
+        typer.secho("✗ ninguna semilla respondió", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    typer.secho(f"✓ en la red: {known} celdas conocidas", fg=typer.colors.GREEN)
+    return node
+
+
+@app.command("node")
+def cmd_node(
+    port: Annotated[int, typer.Option("--port", "-p")] = 4433,
+    host: Annotated[str, typer.Option("--host")] = "::",
+    announce: Annotated[
+        str | None, typer.Option("--announce", help="host:puerto público de esta celda")
+    ] = None,
+    seed: Annotated[list[str] | None, typer.Option("--seed", help="<nid>@host:puerto")] = None,
+    lan: Annotated[bool, typer.Option("--lan", help="baliza multicast en la LAN")] = False,
+) -> None:
+    """Arranca una celda completa: enlace, DHT y mantenimiento."""
+    identity, cfg = _load_identity()
+
+    from nullcell.dht.kademlia import KademliaNode
+    from nullcell.dht.transport import DirectTransport
+    from nullcell.discovery import pex
+    from nullcell.discovery.bootstrap import save_peers
+    from nullcell.net.listener import Listener
+
+    endpoints = [announce] if announce else [f"127.0.0.1:{port}"]
+
+    async def run() -> None:
+        node = KademliaNode(identity, DirectTransport(), endpoints=endpoints)
+        listener = Listener(identity, host, port, on_link=node.attach)
+        await listener.start()
+        typer.secho(f"✓ {identity.short} escuchando en [{host}]:{port}", fg=typer.colors.GREEN)
+        typer.echo(f"  dirección: {identity.hostname}")
+        typer.echo(f"  anuncia:   {', '.join(endpoints)}")
+
+        beacon = None
+        if lan:
+            from nullcell.discovery.mdns import Beacon
+
+            beacon = Beacon(identity, endpoints, on_peer=node.table.add)
+            await beacon.start()
+            typer.echo("  baliza LAN activa")
+
+        seeds = _seeds(seed)
+        if seeds:
+            known = await node.bootstrap(seeds)
+            typer.echo(f"  bootstrap: {known} celdas")
+
+        maintenance = asyncio.create_task(pex.run_periodically(node))
+        try:
+            while True:
+                await asyncio.sleep(30)
+                typer.echo(
+                    f"  [{len(node.table)} celdas] {node.store.stats} rpc={node.stats['rpc_in']}"
+                    f"/{node.stats['rpc_out']}"
+                )
+        finally:
+            maintenance.cancel()
+            if beacon is not None:
+                beacon.stop()
+            save_peers(cfg.path_peers, node.table.all_nodes())
+            listener.close()
+            await node.close()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        typer.echo("\nparado")
+
+
+@app.command("publish")
+def cmd_publish(
+    name: Annotated[str | None, typer.Argument(help="Nombre legible a registrar")] = None,
+    announce: Annotated[str | None, typer.Option("--announce")] = None,
+    seed: Annotated[list[str] | None, typer.Option("--seed")] = None,
+    ttl: Annotated[int, typer.Option("--ttl")] = 3600,
+) -> None:
+    """Publica el descriptor de esta celda, y opcionalmente un nombre."""
+    identity, _ = _load_identity()
+    from nullcell.dht import records as R
+
+    async def run() -> None:
+        node = await _transient_node(identity, _seeds(seed))
+        try:
+            if announce:
+                body = R.RelayBody(endpoints=[announce], x25519=identity.x25519_public).as_dict()
+                typer.echo("resolviendo PoW del descriptor…")
+                record = await R.build(identity, R.RecordType.RELAY, body, ttl=ttl)
+                count = await node.store_record(record)
+                typer.secho(f"✓ descriptor en {count} celdas", fg=typer.colors.GREEN)
+
+            if name:
+                typer.echo(f"resolviendo PoW de {name}.null (el más caro, §10)…")
+                record = await R.build(identity, R.RecordType.NAME, {"name": name}, ttl=ttl)
+                count = await node.store_record(record)
+                if count:
+                    typer.secho(f"✓ {name}.null en {count} celdas", fg=typer.colors.GREEN)
+                else:
+                    typer.secho(
+                        f"✗ {name}.null no fue aceptado: puede estar ya registrado",
+                        fg=typer.colors.YELLOW,
+                    )
+        finally:
+            await node.close()
+
+    asyncio.run(run())
+
+
+@app.command("resolve")
+def cmd_resolve(
+    target: Annotated[str, typer.Argument(help="Nombre o dirección .null")],
+    seed: Annotated[list[str] | None, typer.Option("--seed")] = None,
+) -> None:
+    """Busca en el DHT un nombre o una dirección."""
+    identity, _ = _load_identity()
+    from nullcell.dht import records as R
+
+    async def run() -> None:
+        node = await _transient_node(identity, _seeds(seed))
+        try:
+            bare = ids.parse_hostname(target)
+            try:
+                key = ids.decode_nid(bare).routing_key
+                kind = "dirección"
+            except ids.AddressError:
+                key = R.name_key(bare)
+                kind = "nombre"
+
+            typer.echo(f"buscando {kind} {bare}…")
+            found = await node.find_value(key)
+            if not found:
+                typer.secho("✗ sin resultados", fg=typer.colors.YELLOW)
+                raise typer.Exit(1)
+            for record in found:
+                typer.echo(f"  tipo      {record.type}")
+                typer.echo(f"  celda     {record.nid}")
+                typer.echo(f"  cuerpo    {record.body}")
+                typer.echo(f"  edad      {record.age}s · ttl {record.ttl}s")
+        finally:
+            await node.close()
+
+    asyncio.run(run())
