@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nullcell"
+version = "0.1.0"
+description = "Red P2P cifrada y anónima — circuitos onion sobre QUIC"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+dependencies = [
+    "aioquic>=1.7",
+    "PyNaCl>=1.5",
+    "cryptography>=41",
+    "typer>=0.9",
+    "cbor2>=5.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "pytest-asyncio>=0.21", "ruff>=0.1"]
+fast = ["uvloop>=0.19; sys_platform != 'win32'"]
+
+[project.scripts]
+ncell = "nullcell.cli.main:app"
+
+[tool.setuptools.packages.find]
+include = ["nullcell*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]

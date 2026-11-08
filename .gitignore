@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.DS_Store
+# Estado del nodo: nunca en el repo, nunca sincronizado (ver §12)
+.nullcell/
+*.key
