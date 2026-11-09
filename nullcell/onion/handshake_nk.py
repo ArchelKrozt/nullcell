@@ -40,6 +40,7 @@ from noise.connection import Keypair, NoiseConnection
 __all__ = [
     "HANDSHAKE_LEN",
     "NOISE_PATTERN",
+    "TRANSPORT_OVERHEAD",
     "HandshakeError",
     "HandshakeKeys",
     "Initiator",
@@ -51,6 +52,9 @@ NOISE_PATTERN: Final[bytes] = b"Noise_NK_25519_ChaChaPoly_SHA256"
 
 #: Both handshake messages are 32 bytes of ephemeral key plus a 16-byte tag.
 HANDSHAKE_LEN: Final[int] = 48
+
+#: Overhead Noise transport mode adds per message (the AEAD tag).
+TRANSPORT_OVERHEAD: Final[int] = 16
 
 
 class HandshakeError(Exception):
@@ -137,6 +141,20 @@ class Initiator:
         self.keys = HandshakeKeys(forward=encrypt, backward=decrypt)
         return self.keys
 
+    # ----------------------------------------------------------- transport
+    def encrypt(self, plaintext: bytes) -> bytes:
+        """Noise transport mode, for end-to-end data over a splice (§6).
+
+        Used instead of another layer of our own: the client and the service
+        are the two ends, nobody in between peels anything, and Noise's own
+        AEAD gives confidentiality and integrity with no construction of ours
+        in the middle. Costs 16 bytes of tag.
+        """
+        return bytes(self._conn.encrypt(plaintext))
+
+    def decrypt(self, ciphertext: bytes) -> bytes:
+        return bytes(self._conn.decrypt(ciphertext))
+
 
 class Responder:
     """Relay side of a circuit handshake."""
@@ -166,6 +184,14 @@ class Responder:
         # Mirrored: what the initiator encrypts with is what we decrypt with.
         self.keys = HandshakeKeys(forward=decrypt, backward=encrypt)
         return created, self.keys
+
+    # ----------------------------------------------------------- transport
+    def encrypt(self, plaintext: bytes) -> bytes:
+        """Noise transport mode — see :meth:`Initiator.encrypt`."""
+        return bytes(self._conn.encrypt(plaintext))
+
+    def decrypt(self, ciphertext: bytes) -> bytes:
+        return bytes(self._conn.decrypt(ciphertext))
 
 
 def load_x25519_public(raw: bytes) -> X25519PublicKey:

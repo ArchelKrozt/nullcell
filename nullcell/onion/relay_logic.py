@@ -65,6 +65,10 @@ class CircuitLeg:
     frames_forward: int = 0
     frames_backward: int = 0
     pending_extend: asyncio.Future[bytes] | None = field(default=None, repr=False)
+    #: §6 — when this relay is a rendezvous point, the other half of the
+    #: splice. Bytes recognised on one leg are handed to the other, and this
+    #: relay cannot read any of them.
+    spliced_to: CircuitLeg | None = field(default=None, repr=False)
     #: Receiver side of §5's flow control, for data this hop terminates. The
     #: client spends credit per DATA frame and would block forever at 1000 if
     #: nothing here returned any.
@@ -252,6 +256,12 @@ class RelayService:
                 counter = leg.stream_recv[stream_id] = DeliveryCounter(STREAM_INCREMENT)
             if counter.record():
                 self._send_back(leg, RelayCmd.SENDME, b"", stream_id=stream_id)
+
+    def send_back(
+        self, leg: CircuitLeg, rcmd: RelayCmd, data: bytes = b"", *, stream_id: int = 0
+    ) -> None:
+        """Public entry point for the §6 services layered on top of a relay."""
+        self._send_back(leg, rcmd, data, stream_id=stream_id)
 
     def _send_back(
         self, leg: CircuitLeg, rcmd: RelayCmd, data: bytes, *, stream_id: int = 0

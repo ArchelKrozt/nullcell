@@ -102,7 +102,12 @@ class Cmd(IntEnum):
 
 
 class RelayCmd(IntEnum):
-    """Commands carried inside a ``RELAY`` frame."""
+    """Commands carried inside a ``RELAY`` frame.
+
+    1-9 are the circuit and stream commands of §5. 10-18 are the rendezvous
+    commands of §6, added in M4: §5 listed the first group only, because
+    rendezvous was described in prose rather than as a wire format.
+    """
 
     DATA = 1
     BEGIN = 2
@@ -113,6 +118,17 @@ class RelayCmd(IntEnum):
     EXTENDED = 7
     TRUNCATED = 8
     RESOLVE = 9
+
+    # §6 — rendezvous. Each pair is request and answer.
+    ESTABLISH_INTRO = 10  # service -> intro point
+    INTRO_ESTABLISHED = 11
+    INTRODUCE1 = 12  # client -> intro point
+    INTRODUCE_ACK = 13
+    INTRODUCE2 = 14  # intro point -> service, down the service's own circuit
+    ESTABLISH_RENDEZVOUS = 15  # client -> rendezvous point, leaves a cookie
+    RENDEZVOUS_ESTABLISHED = 16
+    RENDEZVOUS1 = 17  # service -> rendezvous point, presents the cookie
+    RENDEZVOUS2 = 18  # rendezvous point -> client, the splice is live
 
 
 class FrameError(ValueError):
