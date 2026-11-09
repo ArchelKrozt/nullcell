@@ -14,6 +14,7 @@ so the list is checked by a test rather than by remembering.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import pathlib
 import sys
 import tomllib
@@ -30,11 +31,16 @@ _DISTRIBUTIONS: Final[dict[str, str]] = {
 }
 
 
-def _declared() -> set[str]:
-    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    project = data["project"]
+#: Subpackages that are an optional extra, mapped to the extra that carries
+#: them. Their imports are checked against that extra instead of against the
+#: required dependencies — a relay on a server must not download a browser
+#: engine to forward frames.
+_EXTRAS: Final[dict[str, str]] = {"desktop": "desktop"}
+
+
+def _requirement_names(requirements: list[str]) -> set[str]:
     names = set()
-    for requirement in project["dependencies"]:
+    for requirement in requirements:
         name = requirement.split(";")[0]
         for separator in (">=", "==", "<=", ">", "<", "~=", "!="):
             name = name.split(separator)[0]
@@ -42,10 +48,25 @@ def _declared() -> set[str]:
     return names
 
 
-def _imported() -> set[str]:
-    """Top-level third-party modules imported anywhere in the package."""
+def _declared(extra: str | None = None) -> set[str]:
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    project = data["project"]
+    if extra is None:
+        return _requirement_names(project["dependencies"])
+    return _requirement_names(project["optional-dependencies"][extra])
+
+
+def _imported(subpackage: str | None = None) -> set[str]:
+    """Top-level third-party modules imported in the package, or in one part.
+
+    ``subpackage=None`` skips the optional extras, so an engine imported only
+    by the desktop never looks like a missing core dependency.
+    """
+    root = PACKAGE / subpackage if subpackage else PACKAGE
     found: set[str] = set()
-    for path in PACKAGE.rglob("*.py"):
+    for path in root.rglob("*.py"):
+        if subpackage is None and path.relative_to(PACKAGE).parts[0] in _EXTRAS:
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -66,6 +87,36 @@ def test_every_imported_package_is_declared():
         f"imported but not declared in pyproject.toml: {missing}. "
         "A clean install will fail on these."
     )
+
+
+def test_each_optional_subpackage_declares_its_own_engine():
+    """The extras are checked too, just against their own list.
+
+    Without this the desktop could import anything and nobody would notice
+    until `pip install 'nullcell[desktop]'` produced a shell that cannot
+    start — the same class of failure as the undeclared `noiseprotocol`, moved
+    one level down.
+    """
+    for subpackage, extra in _EXTRAS.items():
+        allowed = _declared() | _declared(extra)
+        missing = sorted(
+            name
+            for name in _imported(subpackage)
+            if _DISTRIBUTIONS.get(name, name).lower() not in allowed
+        )
+        assert not missing, f"{subpackage}/ importa sin declarar en [{extra}]: {missing}"
+
+
+def test_the_desktop_engine_is_pinned_to_a_version_that_has_a_browser():
+    """Qt stopped shipping QtWebEngine for macOS in PySide6 6.12, so a floating
+    `PySide6>=6.11` installs a desktop with no browser in it and the failure
+    arrives at runtime as an ImportError. 6.11.3 is the last one that has it.
+    """
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = data["project"]["optional-dependencies"]["desktop"]
+    pyside = next(r for r in requirements if r.lower().startswith("pyside6"))
+    assert "==" in pyside, f"PySide6 debe ir fijada, no {pyside!r}"
+    assert pyside.split("==")[1].strip() == "6.11.3"
 
 
 def test_nothing_is_declared_that_is_never_imported():
@@ -96,3 +147,35 @@ def test_the_package_has_no_import_time_side_effects():
     )
     assert result.returncode == 0, result.stderr
     assert not result.stderr.strip(), f"importing produced output: {result.stderr[:400]}"
+
+
+# ------------------------------------------- M9: los ficheros que no son .py
+def test_the_interface_files_are_declared_as_package_data():
+    """A wheel without the HUD installs a panel that cannot open.
+
+    This is not hypothetical and it was not caught by any test: the wheel
+    carried **no** HUD file at all. `pip install -e` hid it, because an
+    editable install points at the source tree, while `deploy/install.sh` does
+    a normal install — so every operator who followed the official instructions
+    had a HUD that died on `index.html`.
+
+    Checked against the files on disk rather than a fixed list, so a new asset
+    cannot be added without being declared.
+    """
+    import tomllib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    patterns = config["tool"]["setuptools"]["package-data"]["nullcell"]
+
+    assets = [
+        path.relative_to(root / "nullcell").as_posix()
+        for folder in ("hud", "desktop/panel")
+        for path in (root / "nullcell" / folder).iterdir()
+        if path.suffix in {".html", ".css", ".js", ".svg"}
+    ]
+    assert assets, "no se encontró ningún fichero de interfaz"
+
+    for asset in assets:
+        covered = any(fnmatch.fnmatch(asset, pattern) for pattern in patterns)
+        assert covered, f"{asset} no lo cubre ningún patrón de package-data: {patterns}"

@@ -1,0 +1,96 @@
+/* NULLCELL — el panel de la barra de menús (§9).
+ *
+ * Mismos tokens que el HUD, y por el mismo motivo: todo color vive en :root,
+ * así que ~/.nullcell/theme.css sigue sirviendo para esto también. Cero
+ * peticiones externas: una sola le diría a internet que aquí hay un nodo.
+ */
+:root {
+  --bg: #07090d;
+  --surface: #0d1117;
+  --surface-2: #121922;
+  --border: #1d2733;
+  --text: #e6edf3;
+  --text-dim: #7d8da3;
+  --accent-data: #22d3ee;
+  --accent-alert: #ff00ff;
+  --ok: #34d399;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 3px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  width: 360px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  user-select: none;
+}
+.head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.mark {
+  font-weight: 700; letter-spacing: 0.18em; color: var(--accent-data);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--accent-data) 45%, transparent);
+}
+.addr {
+  flex: 1; color: var(--text-dim); font-size: 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); flex: none; }
+.dot.up { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dot.wait { background: var(--accent-alert); }
+
+.phase { margin: 0; padding: 7px 12px; color: var(--text-dim); font-size: 11px;
+         border-bottom: 1px solid var(--border); background: var(--surface-2); }
+
+.block { padding: 11px 12px; border-bottom: 1px solid var(--border); }
+.row { display: flex; align-items: flex-start; gap: 10px; }
+.label { flex: 1; }
+.label strong { display: block; font-weight: 600; font-size: 12px; }
+.label small { display: block; color: var(--text-dim); font-size: 10.5px; margin-top: 2px; }
+code { color: var(--accent-data); }
+
+.switch {
+  flex: none; width: 40px; height: 22px; margin-top: 2px; padding: 2px;
+  border: 1px solid var(--border); border-radius: 11px;
+  background: var(--surface-2); cursor: pointer; position: relative;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.switch .knob {
+  display: block; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--text-dim); transition: transform 140ms ease, background 140ms ease;
+}
+.switch[aria-checked="true"] { background: color-mix(in srgb, var(--ok) 28%, var(--surface-2));
+                               border-color: var(--ok); }
+.switch[aria-checked="true"] .knob { transform: translateX(18px); background: var(--ok); }
+.switch[disabled] { opacity: 0.45; cursor: not-allowed; }
+.switch.busy .knob { background: var(--accent-alert); }
+
+.action {
+  flex: none; padding: 5px 11px; font-family: inherit; font-size: 11px;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;
+}
+.action:hover { border-color: var(--accent-data); color: var(--accent-data); }
+.action.primary { border-color: var(--accent-data); color: var(--accent-data); }
+.action[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+.note { margin: 8px 0 0; padding: 7px 8px; font-size: 10.5px;
+        border-left: 2px solid var(--accent-data); background: var(--surface);
+        color: var(--text-dim); word-break: break-word; }
+.note.bad { border-left-color: var(--accent-alert); color: var(--text); }
+
+.foot { display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 12px; color: var(--text-dim); font-size: 10px; }
+.link { background: none; border: 0; color: var(--text-dim); font-family: inherit;
+        font-size: 10px; cursor: pointer; text-decoration: underline; }
+.link:hover { color: var(--accent-alert); }
+
+@media (prefers-reduced-motion: reduce) {
+  .switch, .switch .knob { transition: none; }
+}

@@ -23,12 +23,39 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.4", "pytest-asyncio>=0.21", "ruff>=0.1"]
 fast = ["uvloop>=0.19; sys_platform != 'win32'"]
+# El escritorio (§9): icono en la barra de menús, panel y navegador.
+#
+# Pinned, not floated, and the reason matters: Qt **dejó de publicar
+# QtWebEngine para macOS en PySide6 6.12**, así que `PySide6>=6.11` instalaría
+# una versión sin navegador y el fallo aparecería en tiempo de ejecución como
+# un ImportError de QtWebEngineWidgets. 6.11.3 es la última que lo trae.
+desktop = ["PySide6==6.11.3"]
 
 [project.scripts]
 ncell = "nullcell.cli.main:app"
 
 [tool.setuptools.packages.find]
 include = ["nullcell*"]
+
+# El HUD (§9) y el panel del escritorio son HTML, CSS y JS, no módulos, y
+# `hud/` y `desktop/panel/` no son paquetes (no tienen __init__.py), así que
+# hay que nombrarlos por ruta.
+#
+# ⚠ Sin esto la rueda no llevaba **ningún** fichero del HUD. `pip install -e`
+# lo ocultaba porque apunta al código fuente, pero `deploy/install.sh` hace un
+# install normal: todo operador que usara el instalador oficial se quedaba con
+# un panel que falla al abrir index.html. Lo destapó construir la rueda y
+# mirar dentro, no una prueba.
+[tool.setuptools.package-data]
+nullcell = [
+    "hud/*.html",
+    "hud/*.css",
+    "hud/*.js",
+    "hud/*.svg",
+    "desktop/panel/*.html",
+    "desktop/panel/*.css",
+    "desktop/panel/*.js",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -69,6 +69,7 @@ Antes que nada, porque definen el proyecto:
 |---|---|
 | **entender el proyecto** | [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md) — el documento del que todo lo demás sale. Las referencias `§N` del código apuntan ahí |
 | **instalarlo** | [`deploy/install.sh`](deploy/install.sh) |
+| **usarlo sin terminal** (icono, panel, navegador) | `ncell desktop` — ver [Escritorio](#escritorio) |
 | **sólo navegar, sin aportar un relevo** | `ncell browse --seed <semilla>` |
 | **levantar un relevo** (lo que hace que exista una red) | `ncell relay --announce TU_IP:4433` |
 | **el punto de entrada del programa** | [`nullcell/cli/main.py`](nullcell/cli/main.py) → `app`, declarado en `pyproject.toml` como el binario `ncell` |
@@ -155,6 +156,36 @@ docker compose -f deploy/docker-compose.lab.yml up --build   # 5 relevos que se 
 > **No pongas `~/.nullcell/` en iCloud, Dropbox ni OneDrive.** Sincronizar `identity.key` saca tu
 > clave privada de la máquina y sincronizar las bases SQLite las corrompe. `ncell` avisa si lo
 > detecta.
+
+## Escritorio
+
+La consola no es sitio para una red en la que vives: no es persistente, y cambiar de opinión
+significa parar el proceso y arrancarlo con otro flag. `ncell desktop` es el mismo nodo con cara.
+
+```bash
+pip install 'nullcell[desktop]'
+ncell desktop
+```
+
+Aparece un icono **NULL** en la barra de menús. Al pulsarlo se abre un panel con:
+
+- un **interruptor** para compartir ancho de banda, que dice la verdad sobre la asimetría: activarlo
+  publica el descriptor, y desactivarlo **deja de anunciar** pero no retracta el descriptor ya
+  publicado, que caduca por TTL;
+- **publicar una carpeta** como portal `.null`, con un selector nativo y sin abrir puertos;
+- el **navegador** de la red, con el buscador y el panel.
+
+Cerrar una ventana no mata el nodo: los interruptores son estado de un proceso vivo en lugar de
+flags que hay que recordar entre arranques.
+
+**El navegador no necesita autoridad de certificación.** La CA de §8 existe para que un navegador
+ajeno acepte `https://…null`; el nuestro registra el esquema `null://` y entrega los bytes del
+circuito directamente al renderizador. Cada dirección sigue siendo su propio origen
+(`null://<56 chars>`), así que el aislamiento entre portales lo sigue dando el navegador. La CA
+sigue existiendo para quien prefiera Firefox vía SOCKS.
+
+> **PySide6 va fijada en 6.11.3 a propósito:** Qt dejó de publicar QtWebEngine para macOS en la
+> 6.12, así que una versión más nueva instala un escritorio sin navegador.
 
 ## Entrar sólo a navegar, sin aportar un relevo
 

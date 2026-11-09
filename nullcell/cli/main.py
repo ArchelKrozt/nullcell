@@ -683,6 +683,48 @@ def cmd_browse(
         typer.echo("\nparado")
 
 
+# ------------------------------------------------ M9: el escritorio (§9)
+@app.command("desktop")
+def cmd_desktop(
+    port: Annotated[int, typer.Option("--port", "-p")] = 4433,
+    host: Annotated[str, typer.Option("--host")] = "::",
+    announce: Annotated[
+        str | None, typer.Option("--announce", help="host:puerto público, para poder ser relevo")
+    ] = None,
+    seed: Annotated[list[str] | None, typer.Option("--seed", help="<nid>@host:puerto")] = None,
+    hud_port: Annotated[int, typer.Option("--hud-port")] = 9180,
+    lan: Annotated[bool, typer.Option("--lan", help="baliza multicast en la LAN")] = False,
+    log_level: Annotated[str, typer.Option("--log-level")] = "warning",
+) -> None:
+    """Icono en la barra de menús, panel con interruptores y navegador (§9).
+
+    Es el mismo nodo de `ncell node`, sin terminal: cerrar una ventana no lo
+    mata y los interruptores son estado de un proceso vivo en lugar de flags
+    que hay que recordar entre arranques.
+    """
+    from nullcell.cli.logging_setup import setup as setup_logging
+
+    setup_logging(log_level)
+    try:
+        from nullcell.desktop.app import run
+    except ImportError:
+        from nullcell.desktop import MISSING_QT
+
+        typer.secho(MISSING_QT, fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(2) from None
+
+    raise typer.Exit(
+        run(
+            port=port,
+            host=host,
+            announce=announce,
+            seeds=_seeds(seed),
+            hud_port=hud_port,
+            lan=lan,
+        )
+    )
+
+
 # ------------------------------------------------- M8: operar un relevo (§1, §10)
 @app.command("relay")
 def cmd_relay(

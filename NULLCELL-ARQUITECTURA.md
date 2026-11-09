@@ -528,6 +528,42 @@ navegador conceda los permisos de origen seguro**.
 > El certificado por sitio se emite solo para direcciones válidas: `site_certificate()` decodifica
 > el nombre como dirección (§3) antes de firmar nada, así que no se le puede convencer de emitir
 > para una cadena arbitraria.
+
+### M9: cuando el navegador es nuestro, la CA deja de hacer falta
+
+Toda la sección anterior existe por una razón: **un navegador ajeno exige `https://` válido**. La
+CA local es la pieza más incómoda del diseño —hay que confiar en ella en algún sitio, y en un
+teléfono ese sitio es el almacén del sistema (§8, `docs/VPS.md`)— y existe únicamente para
+satisfacer una barra de direcciones que no controlamos.
+
+Con un navegador propio de núcleo Chromium, no hace falta nada de eso. Un **esquema registrado**
+entrega los bytes del circuito directamente al renderizador: sin TLS dentro del circuito, sin
+certificado, sin CA, sin nada que instalar y sin nada que confiar. El contenido ya va cifrado
+extremo a extremo por la capa onion; el TLS interior era un peaje de compatibilidad.
+
+Lo que **no** se puede perder en el cambio es el aislamiento entre portales, que hoy lo da el
+navegador porque cada sitio vive en su propio origen. Medido, no supuesto:
+
+| flags del esquema `null://` | ¿A puede leer a B? |
+|---|---|
+| `SecureScheme \| CorsEnabled \| FetchApiAllowed` | **SÍ — fuga** |
+| `SecureScheme` | bloqueado ✓ |
+| `SecureScheme \| FetchApiAllowed` | bloqueado ✓ |
+
+> **⚠ `CorsEnabled` no significa "aplicar CORS aquí".** Significa *"este esquema puede obtenerse
+> entre orígenes"*, que es lo contrario de lo que necesita una red de portales que desconfían entre
+> sí: con ese flag, cada sitio `.null` podía leer cualquier otro sitio `.null` que tuvieras abierto.
+> Es el mismo colapso de mismo-origen por el que §8 rechaza un gateway web, llegando por el nombre
+> de un flag que se lee como una medida de seguridad. La configuración correcta es `Syntax.Host` +
+> `SecureScheme` (+ `FetchApiAllowed` para que una página obtenga **sus propios** recursos), y con
+> ella cada dirección es `null://<56 chars>`, contexto seguro, con `localStorage` particionado.
+
+**La CA no se retira:** sigue siendo el camino para navegadores de terceros vía SOCKS (§8), y eso
+no se pierde. Simplemente deja de ser obligatoria para quien use el navegador del proyecto.
+
+> **Y una restricción de empaquetado que conviene saber:** Qt **dejó de publicar QtWebEngine para
+> macOS en PySide6 6.12**, así que la dependencia va fijada en `6.11.3`, la última que lo trae. Un
+> `>=6.11` instalaría un escritorio sin navegador y el fallo aparecería en tiempo de ejecución.
 >
 > **⚠ Y un tercer fallo, encontrado por el primer CI del proyecto, no por mí.** A la CA le faltaban
 > las extensiones de **identificador de clave**: `SubjectKeyIdentifier` en la CA y

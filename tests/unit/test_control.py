@@ -1,0 +1,308 @@
+"""The actions the panel can take — §9, the control half.
+
+Everything here is reachable over loopback by a page in a browser, so each
+test names the attack it blocks. The read-only HUD could afford a cookie; a
+switch that turns this cell into a public relay in your name cannot.
+"""
+
+from __future__ import annotations
+
+import pytest
+from aiohttp.test_utils import TestClient, TestServer
+
+from nullcell.gateway.control import ControlError, ControlPanel
+from nullcell.gateway.events import EventBus
+from nullcell.gateway.localui import TOKEN_HEADER, LocalUI
+
+
+class FakePaths:
+    def __init__(self, ready: bool = True) -> None:
+        self.ready = ready
+
+    def why_not_ready(self) -> str:
+        return "" if self.ready else "hacen falta 3 relevos usables (§7)"
+
+
+class FakePublisher:
+    ttl = 3600
+
+    def __init__(self) -> None:
+        self.published: list[list[str]] = []
+
+    async def publish_relay(self, endpoints):
+        self.published.append(list(endpoints))
+        return 7
+
+    async def renew_forever(self, *, endpoints=None, **kwargs):
+        import asyncio
+
+        while True:  # pragma: no cover - cancelled by the test
+            await asyncio.sleep(3600)
+
+
+class FakeNode:
+    def __init__(self, endpoints=None) -> None:
+        self.endpoints = endpoints if endpoints is not None else []
+
+
+class FakeIdentity:
+    hostname = "a" * 56 + ".null"
+
+
+class FakeRuntime:
+    def __init__(self, *, endpoints=None, ready: bool = True) -> None:
+        self.node = FakeNode(endpoints)
+        self.publisher = FakePublisher()
+        self.paths = FakePaths(ready)
+        self.identity = FakeIdentity()
+        self.tasks: list = []
+
+    def spawn(self, coroutine):
+        import asyncio
+
+        task = asyncio.ensure_future(coroutine)
+        self.tasks.append(task)
+        return task
+
+
+def panel(**kwargs) -> ControlPanel:
+    import pathlib
+
+    return ControlPanel(FakeRuntime(**kwargs), home=pathlib.Path("/tmp/nullcell-test"))
+
+
+# ------------------------------------------------------------ §10: compartir
+async def test_sharing_starts_off():
+    assert panel(endpoints=["203.0.113.9:4433"]).sharing is False
+
+
+async def test_turning_sharing_on_publishes_and_keeps_renewing():
+    p = panel(endpoints=["203.0.113.9:4433"])
+    result = await p.set_sharing(True)
+    assert result["sharing"] and result["changed"]
+    assert result["stored_on"] == 7
+    assert p.sharing
+    assert p.runtime.publisher.published == [["203.0.113.9:4433"]]
+    await p.set_sharing(False)
+
+
+async def test_a_cell_nobody_can_reach_is_refused_with_the_reason():
+    """Offering bandwidth from an address nobody can dial is not a relay, and
+    silently publishing a useless descriptor is worse than refusing."""
+    with pytest.raises(ControlError, match="alcanzable"):
+        await panel(endpoints=[]).set_sharing(True)
+
+
+async def test_turning_sharing_off_admits_what_it_cannot_undo():
+    """§10's honesty: switching off stops *announcing*. A descriptor already in
+    the DHT stays there until its TTL runs out, and showing a tick would be a
+    lie about how long you remain a relay."""
+    p = panel(endpoints=["203.0.113.9:4433"])
+    await p.set_sharing(True)
+    result = await p.set_sharing(False)
+
+    assert result["sharing"] is False and result["changed"]
+    assert "caduca" in result["detail"]
+    assert "60 min" in result["detail"]
+    assert "vacían" in result["detail"]  # circuits drained, not cut
+    assert not p.sharing
+
+
+async def test_switching_twice_the_same_way_is_not_a_change():
+    p = panel(endpoints=["203.0.113.9:4433"])
+    await p.set_sharing(True)
+    again = await p.set_sharing(True)
+    assert again["changed"] is False
+    await p.set_sharing(False)
+
+
+# ----------------------------------------------------------------- portales
+async def test_publishing_a_folder_that_is_not_there_is_refused(tmp_path):
+    with pytest.raises(ControlError, match="no es una carpeta"):
+        await panel().publish_folder(tmp_path / "no-existe")
+
+
+async def test_publishing_an_empty_folder_is_refused(tmp_path):
+    with pytest.raises(ControlError, match="vacía"):
+        await panel().publish_folder(tmp_path)
+
+
+async def test_a_folder_without_an_index_is_published_with_a_warning(tmp_path):
+    (tmp_path / "datos.txt").write_text("hola")
+    result = await panel().publish_folder(tmp_path)
+    assert result["warning"] == "la carpeta no tiene index.html"
+    assert result["address"].endswith(".null")
+
+
+async def test_publishing_without_routes_says_what_is_missing(tmp_path):
+    (tmp_path / "index.html").write_text("<h1>hola</h1>")
+    with pytest.raises(ControlError, match="3 relevos"):
+        await panel(ready=False).publish_folder(tmp_path)
+
+
+# ------------------------------------------------- §9: quién puede accionar
+@pytest.fixture
+async def client():
+    runtime = FakeRuntime(endpoints=["203.0.113.9:4433"])
+    import pathlib
+
+    ui = LocalUI(
+        lambda: {"nid": "a" * 56, "phase": "listo", "peers": 1, "circuits": []},
+        EventBus(),
+        port=9180,
+        control=ControlPanel(runtime, home=pathlib.Path("/tmp/nullcell-test")),
+    )
+    async with TestClient(TestServer(ui.build_app())) as test_client:
+        test_client.ui = ui  # type: ignore[attr-defined]
+        yield test_client
+
+
+def loopback() -> dict[str, str]:
+    return {"Host": "127.0.0.1:9180"}
+
+
+async def test_a_switch_cannot_be_flipped_with_only_a_cookie(client):
+    """The attack this exists for: a hostile page submits a cross-site form to
+    127.0.0.1:9180 and the browser attaches our session cookie. It cannot set
+    a header, so a mutation asks for the one thing it cannot forge."""
+    response = await client.post(
+        "/api/control/sharing",
+        json={"on": True},
+        headers=loopback(),
+        cookies={"ncell_session": client.ui.token},
+    )
+    assert response.status == 403
+    assert "header" in await response.text()
+
+
+async def test_a_switch_cannot_be_flipped_with_a_token_in_the_url(client):
+    """Same reasoning: a URL travels in links, history and Referer."""
+    response = await client.post(
+        "/api/control/sharing",
+        json={"on": True},
+        headers=loopback(),
+        params={"token": client.ui.token},
+    )
+    assert response.status == 403
+
+
+async def test_reading_the_panel_still_works_with_a_cookie(client):
+    """Reads keep the cookie, or a normal page could not hold a session."""
+    response = await client.get(
+        "/api/control", headers=loopback(), cookies={"ncell_session": client.ui.token}
+    )
+    assert response.status == 200
+    assert (await response.json())["sharing"] is False
+
+
+async def test_the_header_token_can_flip_the_switch(client):
+    response = await client.post(
+        "/api/control/sharing",
+        json={"on": True},
+        headers={**loopback(), TOKEN_HEADER: client.ui.token},
+    )
+    assert response.status == 200
+    body = await response.json()
+    assert body["sharing"] and body["stored_on"] == 7
+
+    off = await client.post(
+        "/api/control/sharing",
+        json={"on": False},
+        headers={**loopback(), TOKEN_HEADER: client.ui.token},
+    )
+    assert (await off.json())["sharing"] is False
+
+
+async def test_a_foreign_host_still_cannot_reach_a_control_route(client):
+    """DNS rebinding has to be blocked before the header check, not after."""
+    response = await client.post(
+        "/api/control/sharing",
+        json={"on": True},
+        headers={"Host": "evil.example.com:9180", TOKEN_HEADER: client.ui.token},
+    )
+    assert response.status == 403
+
+
+async def test_a_missing_body_is_a_400_not_a_crash(client):
+    response = await client.post(
+        "/api/control/sharing",
+        data=b"no-es-json",
+        headers={**loopback(), TOKEN_HEADER: client.ui.token},
+    )
+    assert response.status == 400
+
+
+async def test_a_read_only_node_answers_503():
+    ui = LocalUI(lambda: {}, EventBus(), port=9180)  # no control panel
+    async with TestClient(TestServer(ui.build_app())) as plain:
+        response = await plain.post(
+            "/api/control/sharing",
+            json={"on": True},
+            headers={"Host": "127.0.0.1:9180", TOKEN_HEADER: ui.token},
+        )
+        assert response.status == 503
+
+
+# ------------------------------------------------- M9: el panel del escritorio
+PANEL_ROOT = __import__("pathlib").Path(
+    __import__("nullcell.desktop.node_thread", fromlist=["PANEL_ROOT"]).PANEL_ROOT
+)
+
+
+@pytest.fixture
+async def panel_client():
+    import pathlib
+
+    runtime = FakeRuntime(endpoints=["203.0.113.9:4433"])
+    ui = LocalUI(
+        lambda: {"nid": "a" * 56, "phase": "listo", "peers": 1, "circuits": []},
+        EventBus(),
+        port=9180,
+        control=ControlPanel(runtime, home=pathlib.Path("/tmp/nullcell-test")),
+        panel_root=PANEL_ROOT,
+    )
+    async with TestClient(TestServer(ui.build_app())) as test_client:
+        test_client.ui = ui  # type: ignore[attr-defined]
+        yield test_client
+
+
+def test_the_panel_markup_has_no_inline_script():
+    """§9's CSP is `script-src 'self'`, and it **refused** the first version of
+    this panel, which injected the token in an inline `<script>`. Caught by
+    running it, not by a test. Loosening the CSP to `unsafe-inline` would have
+    traded a real defence for the convenience of one line."""
+    markup = (PANEL_ROOT / "index.html").read_text(encoding="utf-8")
+    assert "<script>" not in markup.replace(" ", "")
+    assert 'src="/panel/config.js"' in markup
+
+
+def test_the_panel_assets_are_referenced_by_absolute_path():
+    """Served at `/panel`, a relative `panel.js` resolves to `/panel.js` — so
+    the stylesheet and the script silently 404 and the panel renders naked."""
+    markup = (PANEL_ROOT / "index.html").read_text(encoding="utf-8")
+    for reference in ('href="/panel/panel.css"', 'src="/panel/panel.js"'):
+        assert reference in markup, f"falta {reference}"
+
+
+async def test_the_token_arrives_as_a_served_script(panel_client):
+    response = await panel_client.get(
+        "/panel/config.js", headers=loopback(), params={"token": panel_client.ui.token}
+    )
+    assert response.status == 200
+    assert "javascript" in response.headers["Content-Type"]
+    assert panel_client.ui.token in await response.text()
+
+
+async def test_the_panel_files_cannot_escape_their_directory(panel_client):
+    """The same check as the HUD's static route, and it is the same code on
+    purpose: two copies is how one of them stops refusing `..`."""
+    for name in ("../pyproject.toml", "..%2Fpyproject.toml", ".hidden"):
+        response = await panel_client.get(
+            f"/panel/{name}", headers=loopback(), params={"token": panel_client.ui.token}
+        )
+        assert response.status == 404, f"sirvió {name!r}"
+
+
+async def test_a_node_without_a_panel_root_serves_no_panel(client):
+    response = await client.get("/panel", headers=loopback(), params={"token": client.ui.token})
+    assert response.status == 404
