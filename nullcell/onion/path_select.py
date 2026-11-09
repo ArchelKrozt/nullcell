@@ -403,6 +403,15 @@ class RelayDirectory:
     def candidates(self, *, now: float | None = None) -> list[RelayCandidate]:
         return list(self._relays.values())
 
+    def get(self, pub: bytes) -> RelayCandidate | None:
+        """The candidate for *pub*, if this node has its descriptor.
+
+        Needed to turn a DHT peer into a circuit's exit hop: a `Node` carries
+        endpoints but no x25519 key, and without that key there is no handshake
+        to make it the last hop (§7, decision 8).
+        """
+        return self._relays.get(pub)
+
     def usable(self, *, min_pow_bits: int = 0, now: float | None = None) -> list[RelayCandidate]:
         """Candidates past the age and work floors of §7."""
         now = time.time() if now is None else now

@@ -27,6 +27,7 @@ from nullcell.dht.routing_table import Node
 from nullcell.dht.transport import DirectTransport
 from nullcell.net.listener import Listener
 from nullcell.onion import rendezvous
+from nullcell.onion.circuit import Hop
 from nullcell.onion.handshake_nk import x25519_public_bytes
 from nullcell.onion.path_select import GuardSet, PathBuilder, RelayDirectory
 from nullcell.onion.relay_logic import RelayService
@@ -63,6 +64,7 @@ class Runtime:
     crawler: object | None = None
     _portals: list[dict] | None = None
     _tasks: list[asyncio.Task] = field(default_factory=list)
+    _direct_transport: object | None = None
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -91,6 +93,50 @@ class Runtime:
             publisher=Publisher(identity, node),
             resolver=Resolver(node, hosts_file=home / "hosts"),
         )
+
+    # ------------------------------------------------- §7, decisión 8
+    def go_anonymous(self) -> None:
+        """Send every DHT request over a three-hop circuit (§7, decision 8).
+
+        §7 is explicit — *"un cliente puro lo manda todo por circuito, sin
+        excepciones"*, the only exception being routing-table upkeep by a relay
+        that is publicly reachable anyway. `CircuitTransport` was built and
+        tested in M4 and then **never wired to a command**: `assemble` gave
+        every cell a `DirectTransport`, whose own docstring says it is "wrong
+        for a client".
+
+        What that cost, concretely: a cell that only browses sent its lookups
+        straight to the DHT peers holding them, so each of those peers learned
+        this node's address *together with the name it was asking for* — which
+        is the exact link the three hops exist to break, handed over before the
+        first circuit was built.
+
+        Must be called after the directory can build paths; `PathBuilder.ready`
+        says when.
+        """
+        from nullcell.dht.transport import CircuitTransport
+
+        async def path_to(node: Node) -> list[Hop]:
+            """A path whose **exit** is the peer being asked."""
+            candidate = self.directory.get(node.pub)
+            if candidate is None:
+                # No descriptor means no x25519 key, so there is no handshake
+                # that could make this peer the last hop. Refusing sends the
+                # lookup to another peer (`_rpc` penalises and moves on); the
+                # alternative would be falling back to a direct request, which
+                # is the leak this method exists to close.
+                raise LookupError(f"no descriptor for {node.short}, cannot exit there")
+            return self.paths.build(ending_at=candidate.as_hop())
+
+        previous = self.node.transport
+        self.node.transport = CircuitTransport(path_to, self.circuits)
+        self._direct_transport = previous
+        log.info("DHT over circuits (§7, decisión 8)")
+
+    @property
+    def anonymous(self) -> bool:
+        """Whether DHT requests leave this cell over a circuit."""
+        return bool(getattr(self.node.transport, "anonymous", False))
 
     async def listen(self, host: str, port: int) -> None:
         """Become reachable, so this cell can carry circuits for others."""

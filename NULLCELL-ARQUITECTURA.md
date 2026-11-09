@@ -414,6 +414,40 @@ circuito, sin excepciones.
 > mantiene **un solo circuito de directorio reutilizado**: medido, 1 construcción para 5
 > peticiones. Cada transporte declara `anonymous`, y el HUD lo muestra, porque la diferencia entre
 > los dos *es* la decisión 8 y no debe quedar implícita.
+>
+> **⚠ Y durante M4–M8 no estuvo conectado a ningún comando.** `Runtime.assemble` daba
+> `DirectTransport` a todas las celdas, incluidas las que sólo navegan. Es el peor tipo de fallo de
+> los que lleva este documento: no faltaba el mecanismo —estaba escrito, medido y con tests—,
+> faltaba **la llamada**. Los tests de M4 lo probaban en aislamiento, así que todo estaba verde
+> mientras la propiedad no existía en el producto. Lo destapó una pregunta de uso: «¿y si sólo
+> quiero navegar, sin aportar un nodo?».
+>
+> El coste, concreto: una celda que sólo navegaba mandaba sus lookups **directos** a los peers del
+> DHT que guardan el registro, así que cada uno de ellos aprendía su dirección IP **junto con el
+> nombre que preguntaba**. Exactamente el vínculo que los tres saltos existen para romper,
+> entregado antes de construir el primer circuito. Y `DirectTransport` lo decía en su propio
+> docstring: *"Not anonymous. [...] wrong for a client"*.
+>
+> Arreglado en M8: `publish`, `resolve`, `host` y `browse` llaman a `go_anonymous()` en cuanto hay
+> rutas; `node` no, porque es la excepción escrita arriba. **El bootstrap sigue siendo directo y no
+> puede no serlo** —hay que hablar con una semilla para saber que existe algún relevo, igual que un
+> cliente Tor descarga su primer consenso directamente—, pero todo lo que viene después, que es
+> *contenido*, va por tres saltos.
+>
+> **Dos piezas del arreglo que no son obvias:**
+> 1. Ir por circuito no basta si el mensaje te nombra. `_me()` adjuntaba `pub` a cada petición, así
+>    que una consulta enviada por tres saltos y luego firmada con «soy esta identidad, alcanzable
+>    aquí» tiraba a la basura justo lo que los tres saltos compraban. Ahora `_me()` se omite si la
+>    celda no tiene endpoints **o** si su transporte es anónimo.
+> 2. Salir por un peer exige su clave x25519, que sólo viaja en su descriptor. Sin descriptor no hay
+>    circuito, y las dos salidas eran negarse o preguntar directo. Preguntar directo *es* la fuga, así
+>    que se niega: `_rpc` penaliza al peer y sigue con otro.
+>
+> **Hueco conocido que queda:** la excepción de arriba habla de *mantenimiento* (pings que no
+> revelan interés por contenido), no de contenido. Una celda que es relevo público **y** publica un
+> servicio debería mandar los pings directos y los descriptores por circuito, y hoy Kademlia tiene
+> un único transporte por nodo, así que elige uno para todo. Por eso `host --announce` va entero por
+> circuito: de las dos opciones imperfectas, es la que no filtra.
 
 ## 8. L3/L4 — Servicios, nombres, acceso y buscador
 

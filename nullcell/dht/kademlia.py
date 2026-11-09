@@ -124,6 +124,24 @@ class KademliaNode:
         return proto.encode(reply)
 
     def _me(self) -> dict[str, Any]:
+        """Who to call back, in every request and reply.
+
+        **Omitted entirely in the two cases where it could only do harm.**
+
+        A cell with *no endpoints* cannot be called back, so the only thing
+        `pub` achieves there is telling every peer it queries "this address
+        belongs to this .null identity" — the one link §7 spends three hops to
+        break. Nothing reads `pub` except :meth:`_learn`, which already ignores
+        it without an endpoint, so leaving it out costs nothing.
+
+        And a cell whose transport is **anonymous** omits it even when it does
+        have endpoints, which is the subtler half: a request sent deliberately
+        through three hops and then signed with "I am reachable at these
+        addresses" has thrown away exactly what the three hops bought. The
+        circuit hides the sender; the payload must not name them.
+        """
+        if not self.endpoints or getattr(self.transport, "anonymous", False):
+            return {}
         return {"pub": self.identity.public_key, "ep": list(self.endpoints)}
 
     def _learn(self, message: dict[str, Any]) -> None:

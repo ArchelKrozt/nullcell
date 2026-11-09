@@ -69,6 +69,7 @@ Antes que nada, porque definen el proyecto:
 |---|---|
 | **entender el proyecto** | [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md) — el documento del que todo lo demás sale. Las referencias `§N` del código apuntan ahí |
 | **instalarlo** | [`deploy/install.sh`](deploy/install.sh) |
+| **sólo navegar, sin aportar un relevo** | `ncell browse --seed <semilla>` |
 | **levantar un relevo** (lo que hace que exista una red) | `ncell relay --announce TU_IP:4433` |
 | **el punto de entrada del programa** | [`nullcell/cli/main.py`](nullcell/cli/main.py) → `app`, declarado en `pyproject.toml` como el binario `ncell` |
 | **el relevo en sí** | [`nullcell/cli/relay.py`](nullcell/cli/relay.py) |
@@ -154,6 +155,36 @@ docker compose -f deploy/docker-compose.lab.yml up --build   # 5 relevos que se 
 > **No pongas `~/.nullcell/` en iCloud, Dropbox ni OneDrive.** Sincronizar `identity.key` saca tu
 > clave privada de la máquina y sincronizar las bases SQLite las corrompe. `ncell` avisa si lo
 > detecta.
+
+## Entrar sólo a navegar, sin aportar un relevo
+
+Navegar y prestar ancho de banda son **comandos distintos**, y el primero no necesita nada del
+segundo:
+
+```bash
+ncell id                                   # tu identidad, una vez
+ncell browse --seed <línea-de-semilla>     # a navegar
+```
+
+Un cliente **no abre ningún puerto**, no necesita IP pública ni dominio, funciona detrás de NAT y
+**no publica nada** en el DHT. Tampoco presenta certificado: la autenticación del enlace es de un
+solo lado —el relevo demuestra quién es, el cliente no demuestra nada—, así que ningún relevo del
+camino ve tu clave de largo plazo.
+
+Lo que sí necesitas es que **otros** estén prestando relevos: §7 exige 3 saltos en operadores
+distintos y 10 minutos de antigüedad observada, así que una instalación nueva espera 10 minutos
+antes de poder construir su primer circuito. Si no hay ruta, el error dice cuál de los dos suelos
+falló y a cuántos relevos excluyó cada uno.
+
+**No se usa Tor, y no se puede.** Nullcell es su propia red: sus propios circuitos de 3 saltos, su
+propio cifrado por capas, su propio espacio de nombres `.null`. Y tunelizarla *a través* de Tor
+tampoco es una opción: Nullcell va sobre **QUIC, que es UDP**, y Tor sólo transporta TCP. No es una
+pieza que falte, es una incompatibilidad de transporte.
+
+**Lo único que no es anónimo es el arranque**, y no puede serlo: hay que hablar con una semilla
+directamente para enterarse de que existe algún relevo —igual que un cliente de Tor descarga su
+primer consenso en directo—. A partir de ahí, incluido **qué nombres resuelves**, todo va por tres
+saltos (§7, decisión 8).
 
 ## Uso
 

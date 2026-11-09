@@ -244,12 +244,19 @@ async def _transient_node(identity, seeds):
     return node
 
 
-async def _runtime(identity, cfg, *, endpoints=None, seeds=None, listen=None):
+async def _runtime(identity, cfg, *, endpoints=None, seeds=None, listen=None, anonymous=False):
     """Assemble a cell, join the network, and learn which relays exist.
 
     Every command that touches the network goes through here, so §7's guard
     pinning and prefix diversity apply to every circuit rather than to the ones
     that happened to remember.
+
+    ``anonymous`` sends the DHT itself over circuits (§7, decision 8). The
+    bootstrap cannot be anonymous and never could be: you have to talk to a
+    seed directly to learn that any relay exists, exactly as a Tor client
+    fetches its first consensus directly. Everything *after* that — which names
+    you resolve, which descriptors you store — is content, and goes over three
+    hops.
     """
     from nullcell.cli.runtime import Runtime
 
@@ -262,6 +269,11 @@ async def _runtime(identity, cfg, *, endpoints=None, seeds=None, listen=None):
         typer.echo(f"  bootstrap: {known} celdas")
         learned = await runtime.learn_relays()
         typer.echo(f"  relevos observados: {learned}")
+
+    if anonymous:
+        _require_paths(runtime)
+        runtime.go_anonymous()
+        typer.secho("✓ DHT por circuitos de 3 saltos (§7, decisión 8)", fg=typer.colors.GREEN)
     return runtime
 
 
@@ -369,7 +381,11 @@ def cmd_publish(
 
     async def run() -> None:
         runtime = await _runtime(
-            identity, cfg, endpoints=[announce] if announce else None, seeds=_seeds(seed)
+            identity,
+            cfg,
+            endpoints=[announce] if announce else None,
+            seeds=_seeds(seed),
+            anonymous=True,
         )
         try:
             if announce:
@@ -403,7 +419,7 @@ def cmd_resolve(
     from nullcell.services.resolver import ResolveError
 
     async def run() -> None:
-        runtime = await _runtime(identity, cfg, seeds=_seeds(seed))
+        runtime = await _runtime(identity, cfg, seeds=_seeds(seed), anonymous=True)
         try:
             typer.echo(f"resolviendo {target}…")
             try:
@@ -467,7 +483,11 @@ def cmd_host(
 
     async def run() -> None:
         runtime = await _runtime(
-            identity, cfg, endpoints=[announce] if announce else None, seeds=_seeds(seed)
+            identity,
+            cfg,
+            endpoints=[announce] if announce else None,
+            seeds=_seeds(seed),
+            anonymous=True,
         )
         try:
             _require_paths(runtime)
@@ -592,7 +612,7 @@ def cmd_browse(
     typer.echo(f"  {profile.install_ca(ca.cert_path)}")
 
     async def run() -> None:
-        runtime = await _runtime(identity, cfg, seeds=_seeds(seed))
+        runtime = await _runtime(identity, cfg, seeds=_seeds(seed), anonymous=True)
         try:
             _require_paths(runtime)
 

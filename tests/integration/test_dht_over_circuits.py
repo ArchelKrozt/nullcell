@@ -233,3 +233,91 @@ async def test_a_node_with_no_endpoint_is_refused():
             await transport.rpc(Node(pub=b"\x00" * 32), b"x")
     finally:
         await transport.close()
+
+
+# ------------------------------------- M8: decisión 8 conectada a los comandos
+def _node(*, endpoints: list[str] | None = None, anonymous: bool = False):
+    """A Kademlia node whose transport declares the given anonymity."""
+
+    class Transport:
+        pass
+
+    transport = Transport()
+    transport.anonymous = anonymous  # type: ignore[attr-defined]
+    return KademliaNode(Identity.generate(), transport, endpoints=endpoints or [])
+
+
+def test_a_pure_client_does_not_put_its_identity_in_a_request():
+    """It cannot be called back, so `pub` could only tell every peer it queries
+    that this address belongs to this .null identity — the link §7 spends three
+    hops to break, handed over in the payload."""
+    assert _node()._me() == {}
+
+
+def test_an_anonymous_request_carries_no_identity_even_when_reachable():
+    """The subtler half. A request sent deliberately through three hops and
+    then signed "I am reachable at these addresses" has thrown away exactly
+    what the three hops bought."""
+    node = _node(endpoints=["203.0.113.9:4433"], anonymous=True)
+    assert node._me() == {}
+
+
+def test_a_reachable_relay_asking_directly_still_identifies_itself():
+    """§7's one exception: a public relay doing routing-table upkeep is
+    reachable anyway, and the network needs to be able to call it back."""
+    node = _node(endpoints=["203.0.113.9:4433"])
+    me = node._me()
+    assert me["ep"] == ["203.0.113.9:4433"]
+    assert me["pub"] == node.identity.public_key
+
+
+def test_the_runtime_starts_direct_and_can_be_switched(tmp_path):
+    """`CircuitTransport` was built and tested in M4 and then never wired to a
+    command: every cell got a `DirectTransport`, whose own docstring says it is
+    "wrong for a client". This is the switch that was missing."""
+    from nullcell.cli.runtime import Runtime
+
+    runtime = Runtime.assemble(Identity.generate(), tmp_path)
+    assert not runtime.anonymous, "assemble should still default to direct"
+    runtime.go_anonymous()
+    assert runtime.anonymous
+    assert runtime.node.transport.anonymous
+
+
+async def test_a_peer_with_no_descriptor_is_skipped_not_sent_to_directly(tmp_path):
+    """The fallback that would have quietly undone the fix.
+
+    Exiting at a peer needs its x25519 key, which only its descriptor carries.
+    With no descriptor there is no circuit, and the only alternatives are to
+    refuse or to ask directly — and asking directly is the leak being closed.
+    `_rpc` turns the refusal into a penalised peer and moves on.
+    """
+    from nullcell.cli.runtime import Runtime
+
+    runtime = Runtime.assemble(Identity.generate(), tmp_path)
+    runtime.go_anonymous()
+    stranger = Node(pub=Identity.generate().public_key, endpoints=["203.0.113.9:4433"])
+
+    with pytest.raises(TransportError):
+        await runtime.node.transport.rpc(stranger, b"x", timeout=0.5)
+
+    # And through the node, the failure is absorbed rather than raised.
+    assert await runtime.node.ping(stranger) is False
+    await runtime.close()
+
+
+def test_every_pure_client_command_is_wired_anonymous():
+    """The bug was not a missing mechanism, it was a mechanism nobody called.
+    A test on the wiring is the only thing that would have caught it.
+    """
+    import inspect
+
+    from nullcell.cli import main
+
+    for name in ("cmd_browse", "cmd_resolve", "cmd_host", "cmd_publish"):
+        source = inspect.getsource(getattr(main, name))
+        assert "anonymous=True" in source, f"{name} consulta el DHT en claro"
+
+    # `node` is the documented exception: a publicly reachable relay doing
+    # routing-table upkeep has no address to hide (§7).
+    assert "anonymous=True" not in inspect.getsource(main.cmd_node)
