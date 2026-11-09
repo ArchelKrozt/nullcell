@@ -3,9 +3,10 @@
 Red P2P cifrada y anónima: circuitos onion de 3 saltos sobre QUIC, sin autoridades de directorio.
 Direcciones `.null` autocertificadas. Python 3.11+, sin root.
 
-**Estado: M4.** Identidad, marcos, enlace QUIC verificado, DHT Kademlia, circuitos onion de 3
-saltos y **rendezvous** funcionan. Un servicio se publica **sin IP pública, sin UPnP y sin abrir
-un solo puerto**: todas sus conexiones son salientes.
+**Estado: M5.** Un navegador abre `https://<nid>.null` con candado, sobre 6 saltos, contra un
+portal que **no tiene IP pública, ni UPnP, ni un solo puerto abierto**. Una página con 20 recursos
+carga en **129 ms** en laboratorio, y las 20 peticiones viajan por **una sola sesión de
+rendezvous**.
 
 > ### ⚠ Qué está verificado y qué sigue abierto
 >
@@ -20,8 +21,14 @@ un solo puerto**: todas sus conexiones son salientes.
 > ataques Sybil y de eclipse. Y la correlación de tráfico extremo a extremo no está resuelta, igual
 > que en Tor.
 >
-> **Falta además** lo que da la experiencia de usuario: no hay SOCKS5, ni CA local, ni `ncell
-> browse`, ni `ncell host` (M5). Hoy esto es una biblioteca y un CLI, no algo que se navegue.
+> **Lo que no está probado aquí:** el lanzamiento real de Firefox. La cadena completa —SOCKS5 con
+> nombre, TLS validado contra la CA local, HTTP sobre 6 saltos— está verificada con un cliente que
+> hace exactamente lo que hace un navegador, pero **el perfil y la importación de la CA necesitan
+> un Firefox de verdad** y no se han ejecutado. `ncell browse` los monta; comprobarlo te toca a ti.
+>
+> La importación de la CA necesita `certutil` de las herramientas NSS (macOS: `brew install nss`).
+> Si falta, `ncell browse` lo dice e imprime el comando, en lugar de fallar en silencio o —peor—
+> sugerir el almacén del sistema.
 
 La arquitectura completa está en [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md). Las
 referencias `§N` de este README y del código apuntan a ese documento.
@@ -79,6 +86,9 @@ ncell node --port 4433 --announce IP:4433 --seed <nid>@host:puerto   # celda com
 ncell publish panaderia --announce IP:4433 --seed <nid>@host:puerto  # registra nombre
 ncell resolve panaderia.null --seed <nid>@host:puerto                # busca en el DHT
 ncell node --hud                                                     # con panel local
+
+ncell host ./mi-sitio --relay <nid>@host:puerto:<x25519-hex> ...      # publicar un portal
+ncell browse <nid> --relay ... --service-key <hex>                    # abrir el navegador
 ```
 
 `--seed` es necesario mientras `bootstrap.json` esté vacío: no hay red pública todavía.
@@ -110,6 +120,12 @@ NULLCELL_HOME=/tmp/b ncell ping <NID-de-a> --addr 127.0.0.1:4455
 | L2b rendezvous, puntos de enlace, 6 saltos extremo a extremo (§6) | ✅ |
 | Servicios privados: índice cegado y cuerpo cifrado (§6) | ✅ |
 | DHT por circuitos, con circuito de directorio reutilizado (decisión 8) | ✅ |
+| L3/L4 streams de app multiplexados sobre una sesión (§8) | ✅ |
+| `ncell host`: carpeta servida sobre circuitos, cero port forwarding (§8) | ✅ |
+| SOCKS5 con resolución remota obligatoria (§8) | ✅ |
+| CA local con restricción de nombres, solo en el perfil dedicado (§8) | ✅ |
+| `ncell browse`: perfil aislado de Firefox (§8) | ✅ sin probar con Firefox real |
+| HTTP/2 hacia el navegador (§16, táctica 7) | ❌ — reclasificada, ver §16 |
 | Diversidad por ASN (§7) | ❌ — ver §7, el motivo está documentado |
 | L2b rendezvous, intro points (§6) | ❌ M4 |
 | SOCKS5, CA local, `ncell browse`, `ncell host` (§8) | ❌ M5 |

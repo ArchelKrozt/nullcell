@@ -51,6 +51,7 @@ from nullcell.onion.rendezvous_msgs import (
 )
 
 __all__ = [
+    "E2E_HEADER",
     "MAX_E2E_PAYLOAD",
     "CircuitManager",
     "HiddenService",
@@ -58,8 +59,20 @@ __all__ = [
     "connect_to_service",
 ]
 
-#: End-to-end data per frame: the relay data field minus Noise's AEAD tag.
-MAX_E2E_PAYLOAD: Final[int] = RELAY_DATA_SIZE - TRANSPORT_OVERHEAD
+#: One byte inside the end-to-end payload, carrying the session-level command
+#: (:class:`~nullcell.core.frames.RelayCmd`) that the rendezvous point must not
+#: be able to read.
+E2E_HEADER: Final[int] = 1
+
+#: End-to-end application data per frame. The full accounting, because getting
+#: it wrong by one byte produced a frame of 497 in a 496-byte field — and the
+#: resulting exception died inside a task, so a response simply never arrived:
+#:
+#:     496 (RELAY_DATA_SIZE)
+#:   −   1 (E2E_HEADER, the session command)
+#:   −  16 (TRANSPORT_OVERHEAD, Noise's AEAD tag)
+#:   = 479
+MAX_E2E_PAYLOAD: Final[int] = RELAY_DATA_SIZE - E2E_HEADER - TRANSPORT_OVERHEAD
 _TIMEOUT: Final[float] = 30.0
 
 log = logging.getLogger("nullcell.service")
@@ -144,10 +157,17 @@ class HiddenService:
         manager: CircuitManager,
         *,
         static: X25519PrivateKey | None = None,
+        multiplexed: bool = False,
     ) -> None:
         self.identity = identity
         self.manager = manager
         self.static = static or X25519PrivateKey.generate()
+        #: A :class:`Session` is one conversation over the splice — a chat, a
+        #: file. A :class:`~nullcell.onion.streams.MultiplexedSession` carries
+        #: many streams over the same splice, which is what a site needs: a
+        #: browser opens several connections per page and each of them must not
+        #: become its own six-hop rendezvous (§8).
+        self.multiplexed = multiplexed
         self.intro_circuits: dict[bytes, Circuit] = {}
         self.intro_points: list[IntroPointRef] = []
         self.sessions: list[Session] = []
@@ -159,15 +179,34 @@ class HiddenService:
         return x25519_public_bytes(self.static)
 
     # ----------------------------------------------------------- publishing
-    async def establish(self, intro_hops: list[list[Hop]]) -> int:
+    async def establish(self, intro_hops: list[list[Hop]], *, attempts: int = 3) -> int:
         """Build a circuit to each intro point and claim a slot on it.
 
         *intro_hops* is one path per intro point, each ending at the relay that
-        is to be the intro point.
+        is to be the intro point. Each path is retried: §6 gives a service
+        three intro points so that losing one does not take it down, and a
+        service that gives up on the first failure has thrown that away.
+
+        Failures are **logged with their reason**. Swallowing them silently is
+        how a service ends up with one intro point instead of three and nobody
+        finds out until introductions start failing.
         """
         for path in intro_hops:
-            with contextlib.suppress(CircuitError, MessageError, TimeoutError):
-                await self._establish_one(path)
+            for attempt in range(1, attempts + 1):
+                try:
+                    await self._establish_one(path)
+                    break
+                except (CircuitError, MessageError, TimeoutError, OSError) as exc:
+                    self.stats["failed"] += 1
+                    log.info(
+                        "intro point %s failed (attempt %d/%d): %s",
+                        path[-1].short,
+                        attempt,
+                        attempts,
+                        exc,
+                    )
+                    if attempt == attempts:
+                        log.warning("giving up on intro point %s", path[-1].short)
         return len(self.intro_points)
 
     async def _establish_one(self, path: list[Hop]) -> None:
@@ -232,10 +271,15 @@ class HiddenService:
             self.stats["failed"] += 1
             return
 
-        session = Session(circuit, responder)
-        circuit.on_data = lambda stream_id, rcmd, data: (
-            session._deliver(data) if rcmd == RelayCmd.DATA else None  # noqa: SLF001
-        )
+        if self.multiplexed:
+            from nullcell.onion.streams import MultiplexedSession
+
+            session = MultiplexedSession(circuit, responder, is_client=False)
+        else:
+            session = Session(circuit, responder)
+            circuit.on_data = lambda stream_id, rcmd, data: (
+                session._deliver(data) if rcmd == RelayCmd.DATA else None  # noqa: SLF001
+            )
         circuit.send_relay(RelayCmd.RENDEZVOUS1, request.cookie + reply)
         self.sessions.append(session)
         self.stats["rendezvous"] += 1
@@ -269,7 +313,8 @@ async def connect_to_service(
     intro_point: IntroPointRef,
     rendezvous_path: list[Hop],
     intro_path: list[Hop],
-) -> Session:
+    multiplexed: bool = False,
+):
     """Reach a service through a rendezvous (§6).
 
     Two circuits of our own: one to the rendezvous point where we leave a
@@ -303,10 +348,15 @@ async def connect_to_service(
     reply = await asyncio.wait_for(spliced, _TIMEOUT)
     initiator.created(reply[:48])
 
-    session = Session(rendezvous_circuit, initiator)
-    rendezvous_circuit.on_data = lambda stream_id, rcmd, data: (
-        session._deliver(data) if rcmd == RelayCmd.DATA else None  # noqa: SLF001
-    )
+    if multiplexed:
+        from nullcell.onion.streams import MultiplexedSession
+
+        session = MultiplexedSession(rendezvous_circuit, initiator, is_client=True)
+    else:
+        session = Session(rendezvous_circuit, initiator)
+        rendezvous_circuit.on_data = lambda stream_id, rcmd, data: (
+            session._deliver(data) if rcmd == RelayCmd.DATA else None  # noqa: SLF001
+        )
     log.info("session open with %s over six hops", ids.short(ids.encode_nid(service_pub)))
     assert len(cookie) == COOKIE_LEN
     return session

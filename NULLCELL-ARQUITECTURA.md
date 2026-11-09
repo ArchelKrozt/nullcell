@@ -443,6 +443,16 @@ Resultado: `https://panaderia.null` con candado y todas las APIs modernas dispon
 No es TLS por confidencialidad — el circuito ya cifra extremo a extremo — es TLS **para que el
 navegador conceda los permisos de origen seguro**.
 
+> **Construido en M5** (`gateway/localca.py`). La CA lleva **restricción de nombres** a los
+> subárboles `null` y `null.alt`, así que incluso si escapara del perfil dedicado no podría avalar
+> nada del internet normal — comprobado en un test. Dos erratas costaron un handshake cada una:
+> RFC 5280 expresa el sufijo **sin punto inicial** (`null`, no `.null`), y la forma RFC 9476 de
+> §15 no está bajo `null` sino bajo `alt`, así que hacen falta los dos subárboles.
+>
+> El certificado por sitio se emite solo para direcciones válidas: `site_certificate()` decodifica
+> el nombre como dirección (§3) antes de firmar nada, así que no se le puede convencer de emitir
+> para una cadena arbitraria.
+
 ### Por qué NO se incrustan sitios ajenos en la UI local
 
 Un iframe con un sitio de Nullcell dentro de `127.0.0.1:9180` haría correr su JavaScript en el
@@ -1042,7 +1052,7 @@ techo del transporte**, que sí mide nuestro código.
 | **M3** | eficiencia de la capa onion: 3 saltos vs (1 salto ÷ 3) | **≥ 80 %** · *medido: 99 %* | ídem |
 | **M3** | marcos/s reenviados por un relevo, 1 núcleo | **≥ 60.000** | `bench/relay_forward.py` |
 | **M4** | establecimiento de rendezvous (6 saltos) | **≤ 2 s** en laboratorio | `bench/rendezvous.py` |
-| **M5** | carga completa de una página con 20 recursos | **≤ 3 s** en laboratorio | Firefox con el perfil + `performance.timing` |
+| **M5** | carga completa de una página con 20 recursos | **≤ 3 s** · *medido: 129 ms* | cliente con SOCKS5 + TLS + HTTP/1.1 |
 | **M7** | HUD con 200 tarjetas de portal | **≤ 5 % CPU** en reposo, 60 fps al desplazar | perfilador del navegador |
 | **M7** | eventos/s empujados al HUD con un relevo saturado | **≤ 20/s** tras agregación | contador en `gateway/events.py` |
 
@@ -1180,6 +1190,53 @@ un vector. Lo que se hace:
   mintiendo no lo puedan mover.
 - Si el desvío estimado supera **1 h**, el HUD lo avisa: a partir de ahí los fallos de validación
   parecen fallos de red y son un infierno de depurar.
+
+### Hallazgos de M5 — la táctica 7 era menos importante de lo estimado
+
+**El dato.** Una página con 20 recursos, seis conexiones en paralelo como hace HTTP/1.1:
+**129 ms**, contra un objetivo de 3 s. Y lo que lo explica: **una sola sesión de rendezvous para
+22 streams.**
+
+Esta sección estimaba que HTTP/2 hacia el navegador era *"probablemente la mayor mejora de
+experiencia percibida de toda la lista"*. **Lo era sobre el supuesto de que cada conexión del
+navegador costaría su propio rendezvous de 6 saltos.** No es el caso: el multiplexado por
+`stream_id` de §5 ya colapsa las peticiones de una página sobre un único empalme, una capa por
+debajo de HTTP. El proxy cachea la sesión por servicio y las seis conexiones paralelas se vuelven
+seis streams.
+
+HTTP/2 seguiría ahorrando cabeceras y una negociación TLS por conexión, pero **baja de "la mayor
+mejora" a "una optimización más"**, y con 129 ms de margen sobre 3 s no es urgente. La táctica 7
+se reclasifica.
+
+> **La caché de sesión no es opcional.** Sin ella, seis peticiones en paralelo no van más lentas:
+> **se agotan por timeout.** Y la caché pertenece al proxy, no a quien lo llama — lo descubrí
+> dejándola fuera.
+
+### Hallazgos de M5 — cinco bugs con la misma forma
+
+Los cinco fallos que encontré escribiendo M5 tenían la misma firma, y vale documentarla porque es
+estructural de esta arquitectura: **en una pila con 6 saltos y varias colas entre causa y síntoma,
+una excepción tragada no se presenta como un error, se presenta como un cuelgue.**
+
+| Fallo | Cómo se presentó |
+|---|---|
+| El codec `idna` rechaza `errors="replace"` lanzando `UnicodeError`, que escapaba del manejador | el navegador esperando para siempre una respuesta SOCKS que nunca llegaba |
+| Off-by-one en el presupuesto de bytes: 1 (comando interno) + 16 (tag de Noise) + 480 = **497** en un campo de 496 | la excepción moría dentro de una tarea; una página de 67 bytes funcionaba y una de 520 no |
+| `StreamTransport.write` lanzaba **una tarea por escritura**, perdiendo el orden | cabeceras HTTP después del cuerpo; el cliente parseando un cuerpo como línea de estado |
+| `encrypt()` antes del `await` del control de flujo | con dos streams concurrentes los nonces de Noise divergían del orden del cable y **nada descifraba** |
+| `transport.close()` no cerraba el stream | `Connection: close` nunca llegaba al otro extremo; el cliente esperando un EOF inexistente |
+
+**Las dos reglas que salen de ahí**, y que valen para el resto del proyecto:
+
+1. **Ningún manejador de conexión deja escapar una excepción.** Lo que no se pueda tratar se
+   convierte en un error de protocolo y se responde; morir en silencio deja al otro extremo
+   colgado, que es mucho peor que un fallo.
+2. **Los presupuestos de bytes se escriben como una suma comprobada por un test**, no como una
+   resta en la cabeza. El presupuesto e2e está fijado en un test que lo verifica exactamente.
+
+Y una tercera, más pequeña: `establish()` suprimía el motivo de los fallos, así que un servicio
+acababa con un punto de enlace en vez de tres y nadie se enteraba hasta que empezaban a fallar las
+introducciones. Ahora reintenta y registra el motivo.
 
 ### Hallazgos de M3 — la capa onion no es el coste
 

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import statistics
 import time
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -384,3 +385,182 @@ def cmd_resolve(
             await node.close()
 
     asyncio.run(run())
+
+
+# ------------------------------------------------------------------- M5: hosting
+def _relay_hops(specs: list[str] | None):
+    """``<nid>@host:puerto:<x25519-hex>`` -> Hop, for a lab.
+
+    §7's path selection needs a populated DHT and relays observed for ten
+    minutes. ``--relay`` bypasses that for a laboratory, and says so.
+    """
+    from nullcell.onion.circuit import Hop
+
+    hops = []
+    for spec in specs or []:
+        try:
+            nid, _, rest = spec.partition("@")
+            endpoint, _, x25519 = rest.rpartition(":")
+            address = ids.decode_nid(nid)
+            hops.append(
+                Hop(
+                    pub=address.pub,
+                    x25519=bytes.fromhex(x25519),
+                    endpoints=[endpoint],
+                )
+            )
+        except (ids.AddressError, ValueError) as exc:
+            raise typer.BadParameter(
+                f"--relay espera <nid>@host:puerto:<x25519-hex>: {exc}"
+            ) from exc
+    return hops
+
+
+@app.command("host")
+def cmd_host(
+    directory: Annotated[str, typer.Argument(help="Carpeta del sitio estático")],
+    relay: Annotated[
+        list[str] | None,
+        typer.Option("--relay", help="<nid>@host:puerto:<x25519-hex> (laboratorio)"),
+    ] = None,
+    name: Annotated[str | None, typer.Option("--name", help="Nombre legible a registrar")] = None,
+    seed: Annotated[list[str] | None, typer.Option("--seed")] = None,
+) -> None:
+    """Publica una carpeta como portal, sin abrir ningún puerto (§8)."""
+    identity, _ = _load_identity()
+    root = Path(directory).expanduser().resolve()
+    if not root.is_dir():
+        typer.secho(f"✗ {root} no es una carpeta", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    hops = _relay_hops(relay)
+    if len(hops) < 3:
+        typer.secho(
+            "✗ hacen falta 3 relevos. Pásalos con --relay mientras no haya red pública;\n"
+            "  la selección automática de §7 exige un DHT poblado y 10 min de antigüedad "
+            "observada.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    from nullcell.host.site import SiteHost, static_app
+    from nullcell.onion.service import CircuitManager, HiddenService
+
+    async def run() -> None:
+        manager = CircuitManager()
+        service = HiddenService(identity, manager, multiplexed=True)
+        host = SiteHost(static_app(root))
+        await host.start()
+        service.on_session = lambda session: setattr(session, "on_stream", host.serve)
+
+        typer.echo(f"construyendo circuitos hacia {len(hops)} relevos…")
+        established = await service.establish([hops])
+        if not established:
+            typer.secho("✗ no se pudo establecer ningún punto de enlace", fg=typer.colors.RED)
+            raise typer.Exit(1)
+
+        typer.secho(f"✓ portal publicado: {identity.hostname}", fg=typer.colors.GREEN)
+        typer.echo(f"  carpeta:          {root}")
+        typer.echo(f"  puntos de enlace: {established}")
+        typer.echo("  sin IP pública, sin UPnP, sin un puerto abierto (§0)")
+        if name:
+            typer.echo(f"  nombre {name}.null: publícalo con `ncell publish {name}`")
+        typer.echo("\n  Ctrl-C para parar")
+        try:
+            while True:
+                await asyncio.sleep(30)
+                typer.echo(f"  [{host.stats['streams']} streams servidos]")
+        finally:
+            await service.close()
+            await manager.close()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        typer.echo("\nparado")
+
+
+@app.command("browse")
+def cmd_browse(
+    target: Annotated[str | None, typer.Argument(help="Dirección .null a abrir")] = None,
+    relay: Annotated[list[str] | None, typer.Option("--relay")] = None,
+    service_x25519: Annotated[
+        str | None, typer.Option("--service-key", help="Clave X25519 del servicio (hex)")
+    ] = None,
+    socks_port: Annotated[int, typer.Option("--socks-port")] = 9150,
+    launch: Annotated[bool, typer.Option("--launch/--no-launch")] = True,
+) -> None:
+    """Levanta el proxy y abre un navegador con perfil aislado (§8)."""
+    identity, _ = _load_identity()
+    home = config.home()
+
+    from nullcell.gateway.browser_profile import BrowserProfile
+    from nullcell.gateway.localca import LocalCA
+    from nullcell.gateway.socks5 import Socks5Proxy
+    from nullcell.onion.service import CircuitManager, connect_to_service
+
+    ca = LocalCA(home / "ca")
+    ca.load_or_create()
+    if warning := ca.permissions_warning():
+        typer.secho(f"⚠  {warning}", fg=typer.colors.YELLOW, err=True)
+
+    profile = BrowserProfile(home / "browser-profile", socks_port=socks_port)
+    profile.write()
+    typer.secho(f"✓ perfil aislado en {profile.directory}", fg=typer.colors.GREEN)
+    typer.echo(f"  {profile.install_ca(ca.cert_path)}")
+
+    hops = _relay_hops(relay)
+    manager = CircuitManager()
+
+    async def open_session(bare_nid: str):
+        if len(hops) < 3 or not service_x25519:
+            raise RuntimeError(
+                "hacen falta 3 relevos (--relay) y la clave del servicio "
+                "(--service-key) mientras no haya descubrimiento por DHT"
+            )
+        from nullcell.onion.rendezvous_msgs import IntroPointRef
+
+        intro = IntroPointRef(pub=hops[2].pub, x25519=hops[2].x25519, endpoints=hops[2].endpoints)
+        return await connect_to_service(
+            manager,
+            service_pub=ids.decode_nid(bare_nid).pub,
+            service_x25519=bytes.fromhex(service_x25519),
+            intro_point=intro,
+            rendezvous_path=hops,
+            intro_path=hops,
+            multiplexed=True,
+        )
+
+    async def run() -> None:
+        proxy = Socks5Proxy(open_session, ca, port=socks_port)
+        port = await proxy.start()
+        typer.secho(f"✓ SOCKS5 en 127.0.0.1:{port}", fg=typer.colors.GREEN)
+        typer.echo("  resolución de nombres remota obligatoria (§8)")
+
+        url = f"https://{ids.parse_hostname(target)}{ids.SUFFIX}" if target else "about:blank"
+        if launch:
+            if profile.launch(url) is None:
+                typer.secho(
+                    "⚠  Firefox no encontrado. Ábrelo a mano con:\n"
+                    f"   firefox -profile {profile.directory} -no-remote {url}",
+                    fg=typer.colors.YELLOW,
+                )
+            else:
+                typer.echo(f"→ abriendo {url}")
+        else:
+            typer.echo(f"→ no se lanza navegador. URL: {url}")
+
+        typer.echo("\n  Ctrl-C para parar")
+        try:
+            while True:
+                await asyncio.sleep(30)
+                typer.echo(f"  [socks {proxy.stats}]")
+        finally:
+            await proxy.close()
+            await manager.close()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        typer.echo("\nparado")
