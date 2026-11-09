@@ -314,3 +314,46 @@ def test_the_guide_only_uses_commands_that_exist():
     guide = (ROOT / "docs" / "VPS.md").read_text(encoding="utf-8")
     used = set(re.findall(r"\bncell ([a-z]+)", guide))
     assert used <= known, f"la guía usa comandos inexistentes: {sorted(used - known)}"
+
+
+def test_the_lab_network_can_actually_build_a_circuit():
+    """The lab validated discovery and nothing else, and said nothing about it.
+
+    Two independent reasons a circuit was impossible in it:
+    bare hostnames (`seed:4433`) have no comparable prefix key, so §7 excluded
+    every relay from path selection; and Docker's default bridge puts all
+    containers in one /16, so even with IP announces only *one* hop would have
+    been admissible. A /13 subnet with one fixed IP per relay in a distinct /16
+    fixes both, and this test is what keeps it fixed.
+    """
+    import yaml
+
+    from nullcell.onion.path_select import CIRCUIT_LENGTH, endpoint_prefix
+
+    compose = yaml.safe_load((ROOT / "deploy" / "docker-compose.lab.yml").read_text())
+    prefixes = []
+    for name, service in compose["services"].items():
+        command = service["command"]
+        announced = command[command.index("--announce") + 1]
+        prefix = endpoint_prefix(announced)
+        assert prefix is not None, f"{name} anuncia {announced}, sin prefijo comparable (§7)"
+        prefixes.append(prefix)
+
+    assert len(set(prefixes)) == len(prefixes), f"prefijos repetidos: {prefixes}"
+    assert len(set(prefixes)) >= CIRCUIT_LENGTH, (
+        f"{len(set(prefixes))} operadores distintos, §7 exige {CIRCUIT_LENGTH}"
+    )
+
+
+def test_the_lab_relays_share_one_subnet_so_they_can_find_each_other():
+    """The other half: distinct /16s are useless if they cannot reach each
+    other, since the relays discover the seed by LAN beacon."""
+    import ipaddress
+
+    import yaml
+
+    compose = yaml.safe_load((ROOT / "deploy" / "docker-compose.lab.yml").read_text())
+    subnet = ipaddress.ip_network(compose["networks"]["lab"]["ipam"]["config"][0]["subnet"])
+    for name, service in compose["services"].items():
+        address = ipaddress.ip_address(service["networks"]["lab"]["ipv4_address"])
+        assert address in subnet, f"{name} ({address}) fuera de {subnet}"

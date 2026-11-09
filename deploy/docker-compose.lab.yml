@@ -3,8 +3,33 @@
 #   docker compose -f docker-compose.lab.yml up --build
 #
 # Cinco relevos que se encuentran solos: el primero arranca sin semillas y los
-# demás usan la suya. Es el mismo escenario que la prueba de 30 celdas, pero
-# atravesando pila de red de verdad en lugar de loopback dentro de un proceso.
+# demás lo descubren por la baliza de LAN (§7). Es el escenario de la prueba de
+# 30 celdas, pero atravesando pila de red de verdad en lugar de loopback dentro
+# de un proceso.
+#
+# ------------------------------------------------------------------ §7 y la red
+# La subred es una **/13 con una IP fija por relevo en un /16 distinto**, y eso
+# no es decoración: §7 exige que los 3 saltos de un circuito estén en prefijos
+# /16 distintos. El laboratorio anterior no cumplía ninguna de las dos
+# condiciones que hacen falta para construir un circuito, así que validaba el
+# descubrimiento y nada más:
+#
+#   1. Anunciaba nombres sin punto (`seed:4433`). Un nombre así no tiene clave
+#      de prefijo comparable —no dice nada de quién lo opera— y queda **fuera de
+#      la selección de rutas por completo**.
+#   2. El bridge por defecto de Docker mete todos los contenedores en un mismo
+#      /16, así que incluso con IPs sólo **un** salto habría sido admisible.
+#
+# Una /13 abarca ocho /16 (172.24 … 172.31) dentro de una sola subred, así que
+# los cinco relevos se ven en L2 —la baliza de LAN funciona— y a la vez cuentan
+# como cinco operadores distintos para §7.
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.24.0.0/13
+
 x-relay: &relay
   image: nullcell:latest
   build:
@@ -19,28 +44,44 @@ services:
   seed:
     <<: *relay
     hostname: seed
-    command: ["relay", "--announce", "seed:4433", "--host", "::", "--port", "4433"]
+    networks:
+      lab:
+        ipv4_address: 172.24.0.2
+    command: ["relay", "--announce", "172.24.0.2:4433", "--host", "::", "--port", "4433"]
 
   cell1: &cell
     <<: *relay
     depends_on: [seed]
-    # Cada celda descubre la semilla por la baliza de LAN (§7), así que no hace
-    # falta inyectar su NID a mano: en una red de laboratorio están en el mismo
-    # segmento.
-    command: ["relay", "--announce", "cell1:4433", "--host", "::", "--port", "4433", "--lan"]
     hostname: cell1
+    networks:
+      lab:
+        ipv4_address: 172.25.0.2
+    command:
+      ["relay", "--announce", "172.25.0.2:4433", "--host", "::", "--port", "4433", "--lan"]
 
   cell2:
     <<: *cell
     hostname: cell2
-    command: ["relay", "--announce", "cell2:4433", "--host", "::", "--port", "4433", "--lan"]
+    networks:
+      lab:
+        ipv4_address: 172.26.0.2
+    command:
+      ["relay", "--announce", "172.26.0.2:4433", "--host", "::", "--port", "4433", "--lan"]
 
   cell3:
     <<: *cell
     hostname: cell3
-    command: ["relay", "--announce", "cell3:4433", "--host", "::", "--port", "4433", "--lan"]
+    networks:
+      lab:
+        ipv4_address: 172.27.0.2
+    command:
+      ["relay", "--announce", "172.27.0.2:4433", "--host", "::", "--port", "4433", "--lan"]
 
   cell4:
     <<: *cell
     hostname: cell4
-    command: ["relay", "--announce", "cell4:4433", "--host", "::", "--port", "4433", "--lan"]
+    networks:
+      lab:
+        ipv4_address: 172.28.0.2
+    command:
+      ["relay", "--announce", "172.28.0.2:4433", "--host", "::", "--port", "4433", "--lan"]
