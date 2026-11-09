@@ -10,11 +10,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
 dependencies = [
-    "aioquic>=1.7",
-    "PyNaCl>=1.5",
-    "cryptography>=41",
-    "typer>=0.9",
-    "cbor2>=5.4",
+    "aioquic>=1.7",          # QUIC: net/
+    "PyNaCl>=1.5",           # Ed25519, X25519, argon2id, ed25519 curve ops
+    "cryptography>=41",      # X.509, ChaCha20, HKDF
+    "noiseprotocol>=0.3.1",  # Noise_NK for the circuit and e2e handshakes (§5, §6)
+    "aiohttp>=3.9",          # the local UI (§9) and the HTTP a portal serves (§8)
+    "typer>=0.9",            # cli/
+    "cbor2>=5.4",            # records and wire messages
 ]
 
 [project.optional-dependencies]
