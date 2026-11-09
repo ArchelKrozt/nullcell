@@ -226,13 +226,25 @@ sea copiar y no reconstruir:
 
 ```
 null-despliegue/
-  nullcell.json     qué portales publicar y con qué nombre
+  nullcell.toml     lo que TÚ declaras: qué publicar y con qué nombre
+  estado.json       lo que el programa cambia en marcha
   identity.key      (opcional) la identidad de esta celda
 ```
 
 ```bash
-ncell desktop --config ./null-despliegue
+ncell desktop                          # busca la configuración sola
+ncell desktop --config ./otra-carpeta  # o se lo dices tú
 ```
+
+Sin `--config` se mira en la última carpeta usada, en la actual, en `./null-despliegue` y en
+`~/.nullcell/despliegue`. Si no hay ninguna, el escritorio **pregunta una vez** y recuerda la
+respuesta.
+
+> **El programa no reescribe tu declaración.** `nullcell.toml` lo escribes tú, con comentarios, y
+> sólo se lee; lo que cambia en marcha va a `estado.json`. Un programa que reescribe el fichero que
+> una persona edita a mano se lleva por delante sus comentarios, y en silencio. TOML antes que JSON
+> por eso mismo: admite comentarios, y una configuración que no puede explicarse a sí misma acaba
+> explicada en otro sitio que se desactualiza.
 
 Hay un ejemplo completo en [`null-despliegue/`](null-despliegue/), que publica
 [`null-mi-web/`](null-mi-web/) —la documentación del proyecto, servida por la propia red— bajo el

@@ -4,9 +4,23 @@ Everything that makes *your* presence on the network lives in one folder, so
 moving from a laptop to a Raspberry Pi is a copy and not a reconstruction:
 
     mi-despliegue/
-      nullcell.json     qué portales publicar y con qué nombre
+      nullcell.toml     lo que TÚ declaras: portales, nombres (o .json)
+      estado.json       lo que el programa cambia en marcha
       identity.key      (opcional) la identidad de esta celda
       sitios/           (opcional) el contenido, si lo quieres dentro
+
+**La declaración es tuya y el programa no la reescribe nunca.** Esa separación
+no es orden por gusto: cuando un programa reescribe el fichero que una persona
+edita a mano, se lleva por delante sus comentarios y su formato, y lo hace en
+silencio. Ya pasó una vez aquí —guardar convertía un `../mi-web` escrito a mano
+en una ruta absoluta y borraba el título— y la respuesta correcta no era
+guardar con más cuidado, era dejar de guardar ahí. Lo que el panel cambia en
+marcha (si estás compartiendo ancho de banda) va a `estado.json`, que es del
+programa y nadie edita.
+
+TOML se prefiere a JSON por una razón concreta: **admite comentarios**, y un
+fichero de configuración que no puede explicarse a sí mismo acaba explicado en
+otro sitio que se desactualiza.
 
 **The address is the key.** `nullcell.null` is not a registration you own at a
 registrar; it is a name in the DHT bound to an Ed25519 key, and the portal's
@@ -29,6 +43,7 @@ import logging
 import os
 import stat
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -37,7 +52,11 @@ __all__ = ["CONFIG_NAME", "Deployment", "Portal"]
 
 log = logging.getLogger(__name__)
 
-CONFIG_NAME: Final[str] = "nullcell.json"
+#: Se busca en este orden. TOML primero: admite comentarios.
+CONFIG_NAMES: Final[tuple[str, ...]] = ("nullcell.toml", "nullcell.json")
+CONFIG_NAME: Final[str] = CONFIG_NAMES[0]
+#: Lo que cambia en marcha, separado de lo que declara la persona.
+STATE_NAME: Final[str] = "estado.json"
 VERSION: Final[int] = 1
 
 
@@ -86,7 +105,16 @@ class Deployment:
     # --------------------------------------------------------------- rutas
     @property
     def config_path(self) -> Path:
+        """The declaration this deployment was read from, if any exists."""
+        for name in CONFIG_NAMES:
+            candidate = self.root / name
+            if candidate.is_file():
+                return candidate
         return self.root / CONFIG_NAME
+
+    @property
+    def state_path(self) -> Path:
+        return self.root / STATE_NAME
 
     @property
     def identity_path(self) -> Path | None:
@@ -111,20 +139,26 @@ class Deployment:
         """Read a deployment folder. A missing config is an empty deployment."""
         root = Path(root).expanduser().resolve()
         deployment = cls(root=root)
+        path = deployment.config_path
         try:
-            body = json.loads(deployment.config_path.read_text(encoding="utf-8"))
+            raw = path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return deployment
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"{deployment.config_path} no se puede leer: {exc}") from exc
+        except OSError as exc:
+            raise ValueError(f"{path} no se puede leer: {exc}") from exc
+
+        try:
+            body = tomllib.loads(raw) if path.suffix == ".toml" else json.loads(raw)
+        except (tomllib.TOMLDecodeError, ValueError) as exc:
+            raise ValueError(f"{path} no se puede leer: {exc}") from exc
 
         if not isinstance(body, dict):
-            raise ValueError(f"{deployment.config_path} debería contener un objeto JSON")
+            raise ValueError(f"{path} debería contener una tabla")
         version = body.get("version", VERSION)
         if not isinstance(version, int) or version > VERSION:
             raise ValueError(
-                f"{deployment.config_path} dice versión {version} y este programa "
-                f"entiende hasta la {VERSION}: actualiza nullcell antes de usarlo"
+                f"{path} dice versión {version} y este programa entiende hasta la "
+                f"{VERSION}: actualiza nullcell antes de usarlo"
             )
 
         entries = body.get("portals")
@@ -133,19 +167,121 @@ class Deployment:
                 if isinstance(entry, dict) and (portal := Portal.from_dict(entry)):
                     deployment.portals.append(portal)
         deployment.sharing = bool(body.get("sharing", False))
+        deployment._load_state()
         return deployment
 
+    def _load_state(self) -> None:
+        """Whatever the panel toggled last time. Never fatal."""
+        try:
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as exc:
+            log.warning("%s ilegible, se ignora: %s", self.state_path, exc)
+            return
+        if isinstance(state, dict) and "sharing" in state:
+            self.sharing = bool(state["sharing"])
+
+    # ------------------------------------------------------------ encontrar
+    @staticmethod
+    def candidates(home: Path | None = None) -> list[Path]:
+        """Where a deployment is looked for, in order.
+
+        Having to pass `--config` every time is a configuration file you have
+        to remember the location of, which is most of the problem a
+        configuration file was meant to solve.
+        """
+        home = home or (Path.home() / ".nullcell")
+        here = Path.cwd()
+        found = [
+            here,  # la carpeta actual, si ya es un despliegue
+            here / "null-despliegue",
+            here / "despliegue",
+            home / "despliegue",
+        ]
+        remembered = Deployment.remembered(home)
+        return ([remembered] if remembered else []) + found
+
+    @staticmethod
+    def remembered(home: Path | None = None) -> Path | None:
+        """The last deployment used, so it is not asked for twice."""
+        home = home or (Path.home() / ".nullcell")
+        try:
+            body = json.loads((home / "despliegue.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        path = body.get("root") if isinstance(body, dict) else None
+        return Path(path) if isinstance(path, str) and path else None
+
+    def remember_location(self, home: Path | None = None) -> None:
+        """Note where this deployment lives, for the next start."""
+        home = home or (Path.home() / ".nullcell")
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+            (home / "despliegue.json").write_text(
+                json.dumps({"root": str(self.root)}, indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError as exc:
+            log.warning("no se pudo recordar la carpeta de despliegue: %s", exc)
+
+    @classmethod
+    def discover(cls, home: Path | None = None) -> Deployment | None:
+        """The first candidate that actually holds a declaration, or None.
+
+        Returning None is a real answer — "nobody has set one up yet" — and the
+        caller is expected to ask rather than invent one. A broken declaration
+        is *not* skipped: it is raised, because silently moving on to the next
+        candidate would hide a typo in the file the operator is editing right
+        now.
+        """
+        seen: set[Path] = set()
+        for candidate in cls.candidates(home):
+            root = Path(candidate).expanduser()
+            if not root.is_dir():
+                continue
+            resolved = root.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if any((resolved / name).is_file() for name in CONFIG_NAMES):
+                return cls.load(resolved)
+        return None
+
     def save(self) -> None:
-        """Write it back, keeping it readable: people edit this by hand."""
+        """Write back **only what the program owns**.
+
+        The declaration is never touched. A program that rewrites the file a
+        person edits by hand destroys their comments and their formatting, and
+        does it silently; here it also once turned a hand-written `../mi-web`
+        into an absolute path, which is the exact thing the warnings tell
+        people not to write.
+        """
         self.root.mkdir(parents=True, exist_ok=True)
-        body = {
-            "version": VERSION,
-            "sharing": self.sharing,
-            "portals": [p.as_dict() for p in self.portals],
-        }
-        self.config_path.write_text(
-            json.dumps(body, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        self.state_path.write_text(
+            json.dumps({"version": VERSION, "sharing": self.sharing}, indent=2) + "\n",
+            encoding="utf-8",
         )
+
+    def write_declaration(self, *, portals: list[Portal] | None = None) -> Path:
+        """Create a starter declaration. Only used when there is none.
+
+        Writes JSON rather than TOML on purpose: a generated TOML would have no
+        comments, which is the only reason to prefer TOML, and this project
+        does not carry a TOML writer to gain nothing.
+        """
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.portals = portals if portals is not None else self.portals
+        target = self.root / "nullcell.json"
+        target.write_text(
+            json.dumps(
+                {"version": VERSION, "portals": [p.as_dict() for p in self.portals]},
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return target
 
     # ------------------------------------------------------------- revisar
     def warnings(self) -> list[str]:

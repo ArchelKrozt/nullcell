@@ -51,6 +51,8 @@ class NodeThread:
 
         self.url: str | None = None
         self.reach: str = "unknown"
+        self.deployment_error: str | None = None
+        self._deployment_cache: Any = False  # False = aún no se ha buscado
         self.token: str | None = None
         self.error: BaseException | None = None
         self.identity: Any = None
@@ -110,10 +112,9 @@ class NodeThread:
         # taking the tuple as an identity fails much later, inside the first
         # handshake, with a message about neither identities nor tuples.
         key_path = cfg.path_identity
-        if self.config:
-            from nullcell.host.deployment import Deployment
-
-            carried = Deployment.load(self.config).identity_path
+        deployment = self._deployment()
+        if deployment is not None:
+            carried = deployment.identity_path
             if carried is not None:
                 # The address *is* the key (§3). A deployment that carries its
                 # own identity keeps its .null name when it moves; one that
@@ -144,13 +145,7 @@ class NodeThread:
         bus = EventBus()
         runtime.open_index()
         await runtime.refresh_portals()
-        deployment = None
-        if self.config:
-            from nullcell.host.deployment import Deployment
-
-            deployment = Deployment.load(self.config)
-            for warning in deployment.warnings():
-                log.warning("%s", warning)
+        deployment = self._deployment()
         panel = ControlPanel(runtime, home=home, deployment=deployment)
         ui = LocalUI(
             runtime.status,
@@ -190,6 +185,35 @@ class NodeThread:
         finally:
             await ui.close()
             await runtime.close()
+
+    # ----------------------------------------------------------- despliegue
+    def _deployment(self):
+        """The deployment this cell runs, found once and kept.
+
+        Three ways, in order: the folder the operator named, the one found by
+        looking in the usual places, and none — which is a real answer, not a
+        reason to invent one. The shell asks when it is none.
+        """
+        if self._deployment_cache is not False:
+            return self._deployment_cache
+
+        from nullcell.host.deployment import Deployment
+
+        found = None
+        try:
+            found = Deployment.load(self.config) if self.config else Deployment.discover()
+        except ValueError as exc:
+            # A broken declaration is reported, never skipped: moving on
+            # quietly would hide a typo in the file being edited right now.
+            self.deployment_error = str(exc)
+            log.error("%s", exc)
+
+        if found is not None:
+            for warning in found.warnings():
+                log.warning("%s", warning)
+            found.remember_location()
+        self._deployment_cache = found
+        return found
 
     # --------------------------------------------------------------- reaching
     async def open_session(self, bare_nid: str):

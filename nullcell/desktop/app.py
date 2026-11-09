@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 from typing import Any
 
 from nullcell.desktop.node_thread import NodeThread
@@ -154,6 +155,107 @@ class Shell:
             return
         self.panel.view.page().runJavaScript(f"window.{function}({json.dumps(payload)})")
 
+    # --------------------------------------------------------- despliegue
+    def offer_deployment(self) -> None:
+        """Ask once where the configuration lives, if nothing was found.
+
+        Having to remember to pass `--config` is a configuration file you have
+        to remember the location of, which is most of the problem a
+        configuration file was meant to solve. So: look first, ask second, and
+        remember the answer so the question is asked once.
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        if self.node.deployment_error:
+            QMessageBox.warning(
+                None,
+                "Nullcell",
+                "Tu configuración de despliegue no se puede leer, así que no se ha publicado "
+                f"ningún portal:\n\n{self.node.deployment_error}\n\n"
+                "Corrige el fichero y vuelve a abrir Nullcell.",
+            )
+            return
+        if self.node._deployment() is not None:  # noqa: SLF001
+            return
+
+        box = QMessageBox()
+        box.setWindowTitle("Nullcell")
+        box.setText("¿Tienes una carpeta de despliegue?")
+        box.setInformativeText(
+            "Es la carpeta con tu fichero de configuración: qué carpeta publicar y con qué "
+            "nombre .null. No hace falta para navegar ni para ser relevo — sólo para publicar "
+            "un portal."
+        )
+        locate = box.addButton("Buscarla…", QMessageBox.ButtonRole.AcceptRole)
+        create = box.addButton("Crear una nueva…", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Ahora no", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+
+        clicked = box.clickedButton()
+        if clicked is locate:
+            self._locate_deployment()
+        elif clicked is create:
+            self._create_deployment()
+
+    def _locate_deployment(self) -> None:
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+        folder = QFileDialog.getExistingDirectory(None, "Carpeta de despliegue")
+        if not folder:
+            return
+        from nullcell.host.deployment import CONFIG_NAMES, Deployment
+
+        try:
+            deployment = Deployment.load(folder)
+        except ValueError as exc:
+            QMessageBox.warning(None, "Nullcell", str(exc))
+            return
+        if not deployment.portals:
+            QMessageBox.information(
+                None,
+                "Nullcell",
+                f"En {folder} no hay ninguna declaración "
+                f"({' o '.join(CONFIG_NAMES)}), así que no hay nada que publicar.",
+            )
+            return
+        deployment.remember_location()
+        self._apply_deployment(deployment)
+
+    def _create_deployment(self) -> None:
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+        from nullcell.host.deployment import Deployment, Portal
+
+        site = QFileDialog.getExistingDirectory(None, "Carpeta del sitio que quieres publicar")
+        if not site:
+            return
+        where = QFileDialog.getExistingDirectory(None, "Dónde guardar la configuración")
+        if not where:
+            return
+
+        import os
+
+        deployment = Deployment(root=Path(where))
+        folder = os.path.relpath(site, deployment.root)
+        written = deployment.write_declaration(portals=[Portal(folder=folder)])
+        deployment.remember_location()
+        QMessageBox.information(
+            None,
+            "Nullcell",
+            f"Configuración creada en:\n{written}\n\nEdítala para ponerle un nombre .null. "
+            "El programa no la reescribe, así que tus comentarios se quedan.",
+        )
+        self._apply_deployment(deployment)
+
+    def _apply_deployment(self, deployment: Any) -> None:
+        """Hand it to the running node, without restarting anything."""
+        panel = getattr(self.node, "panel", None)
+        if panel is None:
+            return
+        panel.deployment = deployment
+        self.node.call(panel.restore)
+        self._tell_panel("ncellPublished", {"ok": True})
+
     # ------------------------------------------------------------ lifecycle
     def toggle_panel(self, reason: Any = None) -> None:
         from PySide6.QtGui import QCursor
@@ -206,6 +308,7 @@ def run(**options: Any) -> int:
         QMessageBox.critical(None, "Nullcell", f"El nodo no arrancó:\n\n{exc}")
         return 1
 
+    shell.offer_deployment()
     shell.panel = _build_panel(node, shell)
     from PySide6.QtCore import QUrl
 

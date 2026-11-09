@@ -13,12 +13,20 @@ import sys
 import pytest
 
 from nullcell.desktop.failures import explain
-from nullcell.host.deployment import CONFIG_NAME, Deployment, Portal
+from nullcell.host.deployment import Deployment, Portal
 
 
 def write(root, body):
+    """A JSON declaration. Named explicitly: the preferred name is TOML now,
+    and writing JSON into a `.toml` file is a test that lies about itself."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / CONFIG_NAME).write_text(json.dumps(body), encoding="utf-8")
+    (root / "nullcell.json").write_text(json.dumps(body), encoding="utf-8")
+    return root
+
+
+def write_toml(root, text):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "nullcell.toml").write_text(text, encoding="utf-8")
     return root
 
 
@@ -58,8 +66,14 @@ def test_an_absolute_folder_is_kept_but_reported(tmp_path):
 
 
 def test_a_broken_config_says_which_file_and_why(tmp_path):
-    (tmp_path / CONFIG_NAME).write_text("{esto no es json")
-    with pytest.raises(ValueError, match=CONFIG_NAME):
+    (tmp_path / "nullcell.json").write_text("{esto no es json")
+    with pytest.raises(ValueError, match="nullcell.json"):
+        Deployment.load(tmp_path)
+
+
+def test_a_broken_toml_also_says_which_file(tmp_path):
+    write_toml(tmp_path, "esto [no es toml")
+    with pytest.raises(ValueError, match="nullcell.toml"):
         Deployment.load(tmp_path)
 
 
@@ -76,23 +90,33 @@ def test_entries_that_make_no_sense_are_skipped_not_fatal(tmp_path):
 
 
 # -------------------------------------------------------------------- guardar
-def test_it_round_trips(tmp_path):
-    deployment = Deployment(root=tmp_path, sharing=True)
-    deployment.portals = [Portal(folder="sitios/web", name="nullcell", title="T")]
-    deployment.save()
-
+def test_a_declaration_round_trips(tmp_path):
+    deployment = Deployment(root=tmp_path)
+    deployment.write_declaration(portals=[Portal(folder="sitios/web", name="nullcell", title="T")])
     again = Deployment.load(tmp_path)
-    assert again.sharing is True
     assert again.portals[0].name == "nullcell"
     assert again.portals[0].title == "T"
+
+
+def test_save_writes_the_state_and_only_the_state(tmp_path):
+    """`save()` is for what the program owns. The declaration is the
+    operator's and is never touched by it."""
+    write(tmp_path, {"portals": [{"folder": "web"}]})
+    before = (tmp_path / "nullcell.json").read_text(encoding="utf-8")
+
+    deployment = Deployment.load(tmp_path)
+    deployment.sharing = True
+    deployment.save()
+
+    assert (tmp_path / "nullcell.json").read_text(encoding="utf-8") == before
+    assert Deployment.load(tmp_path).sharing is True
 
 
 def test_what_is_written_stays_readable_by_a_human(tmp_path):
     """People edit this file by hand, so it is indented and not escaped."""
     deployment = Deployment(root=tmp_path)
-    deployment.portals = [Portal(folder="web", title="La Panadería")]
-    deployment.save()
-    text = deployment.config_path.read_text(encoding="utf-8")
+    written = deployment.write_declaration(portals=[Portal(folder="web", title="La Panadería")])
+    text = written.read_text(encoding="utf-8")
     assert "\n  " in text
     assert "Panadería" in text, "ensure_ascii destrozaría los acentos"
 
@@ -159,11 +183,17 @@ def test_an_unknown_failure_still_says_what_happened():
 
 
 # ------------------------------- lo que pasa al guardar lo que se restauró
-async def test_saving_does_not_turn_a_relative_path_into_an_absolute_one(tmp_path):
-    """The program must not write the very thing `warnings()` tells people not
-    to write. `Path.relative_to` refuses to walk upwards, so a hand-written
-    `../mi-web` became absolute on the first save and the folder stopped being
-    portable — silently, since everything kept working on *this* machine.
+async def test_the_declaration_is_never_rewritten(tmp_path):
+    """The design the earlier bug argued for.
+
+    Saving used to rewrite the operator's file: `Path.relative_to` refuses to
+    walk upwards, so a hand-written `../mi-web` became an absolute path — the
+    program writing exactly what `warnings()` tells people not to write — and
+    the title, description and tags were dropped on the way.
+
+    Guarding each field was the small fix. The real one is that a file a person
+    edits by hand, with comments in it, is not the program's to rewrite. What
+    the panel toggles lives in `estado.json` instead.
     """
     import pathlib
     import sys
@@ -176,7 +206,16 @@ async def test_saving_does_not_turn_a_relative_path_into_an_absolute_one(tmp_pat
     site = tmp_path / "mi-web"
     site.mkdir()
     (site / "index.html").write_text("<h1>hola</h1>")
-    root = write(tmp_path / "despliegue", {"portals": [{"folder": "../mi-web", "name": "x"}]})
+
+    declaration = """# un comentario que debe sobrevivir
+version = 1
+[[portals]]
+folder = "../mi-web"
+name = "x"
+title = "La Panaderia"
+tags = ["comida"]
+"""
+    root = write_toml(tmp_path / "despliegue", declaration)
 
     deployment = Deployment.load(root)
     panel = ControlPanel(
@@ -185,52 +224,76 @@ async def test_saving_does_not_turn_a_relative_path_into_an_absolute_one(tmp_pat
         deployment=deployment,
     )
     await panel.restore()
-    panel.remember()
+    await panel.set_sharing(True)  # algo que SÍ se guarda
     await panel.unpublish(save=False)
 
-    assert Deployment.load(root).portals[0].folder == "../mi-web"
+    assert (root / "nullcell.toml").read_text(encoding="utf-8") == declaration
+    assert (root / "estado.json").is_file(), "el estado debe ir a su propio fichero"
+    assert Deployment.load(root).sharing is True
 
 
-async def test_saving_keeps_the_fields_it_does_not_know_about(tmp_path):
-    """An update that does not carry a field is not an instruction to erase it
-    — the same mistake that once wiped descriptor titles in gossip."""
-    import pathlib
-    import sys
+# ------------------------------------------------------------------ encontrar
+def test_a_deployment_is_found_without_being_told_where(tmp_path, monkeypatch):
+    """Having to pass `--config` every time is a configuration file you have to
+    remember the location of, which is most of the problem it was meant to
+    solve."""
+    write(tmp_path / "null-despliegue", {"portals": [{"folder": "web"}]})
+    monkeypatch.chdir(tmp_path)
+    found = Deployment.discover(home=tmp_path / "home")
+    assert found is not None
+    assert found.root == (tmp_path / "null-despliegue").resolve()
 
-    sys.path.insert(0, str(pathlib.Path(__file__).parent))
-    from test_control import FakeRuntime
 
-    from nullcell.gateway.control import ControlPanel
+def test_nothing_found_is_a_real_answer(tmp_path, monkeypatch):
+    """None means "nobody has set one up", and the caller is expected to ask
+    rather than invent one."""
+    monkeypatch.chdir(tmp_path)
+    assert Deployment.discover(home=tmp_path / "home") is None
 
-    site = tmp_path / "despliegue" / "web"
-    site.mkdir(parents=True)
-    (site / "index.html").write_text("<h1>hola</h1>")
-    root = write(
-        tmp_path / "despliegue",
-        {
-            "portals": [
-                {
-                    "folder": "web",
-                    "name": "x",
-                    "title": "La Panadería",
-                    "desc": "pan",
-                    "tags": ["comida"],
-                }
-            ]
-        },
+
+def test_a_remembered_location_is_looked_at_first(tmp_path, monkeypatch):
+    far = write(tmp_path / "lejos", {"portals": [{"folder": "web", "name": "lejano"}]})
+    write(tmp_path / "null-despliegue", {"portals": [{"folder": "web", "name": "cercano"}]})
+    monkeypatch.chdir(tmp_path)
+
+    home = tmp_path / "home"
+    Deployment.load(far).remember_location(home)
+    found = Deployment.discover(home=home)
+    assert found.portals[0].name == "lejano"
+
+
+def test_a_broken_declaration_is_raised_not_skipped(tmp_path, monkeypatch):
+    """Quietly moving on to the next candidate would hide a typo in the file
+    the operator is editing right now."""
+    (tmp_path / "null-despliegue").mkdir()
+    (tmp_path / "null-despliegue" / "nullcell.json").write_text("{roto")
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError):
+        Deployment.discover(home=tmp_path / "home")
+
+
+# ----------------------------------------------------------------------- TOML
+def test_toml_is_read_with_its_comments_intact(tmp_path):
+    """TOML is preferred over JSON for one concrete reason: it takes comments,
+    and a configuration file that cannot explain itself ends up explained
+    somewhere else that goes stale."""
+    write_toml(
+        tmp_path,
+        '# el portal principal\nversion = 1\n[[portals]]\nfolder = "web"\nname = "pan"\n',
     )
+    deployment = Deployment.load(tmp_path)
+    assert deployment.portals[0].name == "pan"
+    assert "# el portal principal" in deployment.config_path.read_text(encoding="utf-8")
 
-    deployment = Deployment.load(root)
-    panel = ControlPanel(
-        FakeRuntime(endpoints=["192.168.1.5:4433"], ready=False),
-        home=tmp_path / "home",
-        deployment=deployment,
-    )
-    await panel.restore()
-    panel.remember()
-    await panel.unpublish(save=False)
 
-    saved = Deployment.load(root).portals[0]
-    assert saved.title == "La Panadería"
-    assert saved.desc == "pan"
-    assert saved.tags == ["comida"]
+def test_toml_wins_when_both_are_there(tmp_path):
+    write(tmp_path, {"portals": [{"folder": "json", "name": "json"}]})
+    write_toml(tmp_path, '[[portals]]\nfolder = "toml"\nname = "toml"\n')
+    assert Deployment.load(tmp_path).portals[0].name == "toml"
+
+
+def test_a_generated_declaration_can_be_read_back(tmp_path):
+    deployment = Deployment(root=tmp_path)
+    written = deployment.write_declaration(portals=[Portal(folder="web", name="pan")])
+    assert written.name == "nullcell.json"
+    assert Deployment.load(tmp_path).portals[0].name == "pan"

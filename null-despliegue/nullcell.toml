@@ -1,0 +1,33 @@
+# ------------------------------------------------------------------ Nullcell
+# Lo que ESTA celda publica en la red.
+#
+# Este fichero lo escribes tú y el programa no lo reescribe nunca, así que
+# estos comentarios siguen aquí mañana. Lo que el panel cambia en marcha
+# —si estás compartiendo ancho de banda— vive aparte, en `estado.json`.
+#
+#     ncell desktop --config ./null-despliegue
+#
+# Y si lo dejas en un sitio donde se busca solo (`./null-despliegue`, la
+# carpeta actual, o `~/.nullcell/despliegue`), basta con:
+#
+#     ncell desktop
+#
+version = 1
+
+# --------------------------------------------------------------- el portal
+# `folder` es relativo A ESTA CARPETA, a propósito: una ruta absoluta como
+# /Users/alguien/sitio deja de existir en cuanto esto llegue a la Raspberry
+# Pi, y el fallo aparecería como un portal vacío en lugar de como un error.
+#
+# Si quieres que la mudanza sea UNA sola carpeta, mete el sitio dentro y pon
+# folder = "sitios/mi-web".
+[[portals]]
+folder = "../null-mi-web"
+
+# El nombre legible. Primero que llega, se lo queda: no hay registrador y no
+# hay cuota. Si ya está tomado, el panel lo dirá en lugar de fingir que no.
+name = "nullcell"
+
+title = "Nullcell — qué es, cómo funciona y qué le falta"
+desc  = "Documentación del proyecto, servida por la propia red"
+tags  = ["documentacion", "nullcell", "p2p", "anonimato"]
