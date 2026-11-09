@@ -29,7 +29,9 @@ __all__ = ["run"]
 _ACTIONS = frozenset({"pick-folder", "open-browser", "quit"})
 
 PANEL_WIDTH = 360
-PANEL_HEIGHT = 470
+# Medido sobre el panel renderizado (379 px de contenido), no estimado: a 470
+# quedaba una franja vacía de 90 px bajo el pie.
+PANEL_HEIGHT = 392
 
 
 def _icon(size: int = 44):

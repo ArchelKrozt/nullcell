@@ -49,7 +49,15 @@ async function refresh() {
 }
 
 function paint(state, control) {
-  if (state.nid) $("addr").textContent = `${state.nid}.null`;
+  if (state.nid) {
+    // 56 caracteres de base32 no se leen, y el relleno del medio no dice nada.
+    // El proyecto ya abrevia asi en todas partes (`identity.short`).
+    const nid = state.nid;
+    const corto = nid.length > 16 ? `${nid.slice(0, 6)}…${nid.slice(-6)}` : nid;
+    const addr = $("addr");
+    addr.textContent = `${corto}.null`;
+    addr.title = `${nid}.null`;  // entera, al pasar el raton
+  }
   $("phase").textContent = control.paths_ready
     ? state.phase || "listo"
     : control.why_not_ready || "esperando relevos";

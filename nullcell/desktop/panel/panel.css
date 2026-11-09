@@ -39,7 +39,7 @@ body {
 }
 .addr {
   flex: 1; color: var(--text-dim); font-size: 10px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); flex: none; }
 .dot.up { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
