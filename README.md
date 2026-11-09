@@ -1,5 +1,9 @@
 # Nullcell
 
+[![CI](https://github.com/ArchelKrozt/nullcell/actions/workflows/ci.yml/badge.svg)](https://github.com/ArchelKrozt/nullcell/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/licencia-AGPL--3.0-blue)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+
 Red P2P cifrada y anónima: circuitos onion de 3 saltos sobre QUIC, sin autoridades de directorio.
 Direcciones `.null` autocertificadas. Python 3.11+, sin root.
 

@@ -475,6 +475,20 @@ navegador conceda los permisos de origen seguro**.
 > El certificado por sitio se emite solo para direcciones válidas: `site_certificate()` decodifica
 > el nombre como dirección (§3) antes de firmar nada, así que no se le puede convencer de emitir
 > para una cadena arbitraria.
+>
+> **⚠ Y un tercer fallo, encontrado por el primer CI del proyecto, no por mí.** A la CA le faltaban
+> las extensiones de **identificador de clave**: `SubjectKeyIdentifier` en la CA y
+> `AuthorityKeyIdentifier` en el certificado del sitio. RFC 5280 las pide y **OpenSSL moderno las
+> exige**: sin el par, la verificación falla con `Missing Authority Key Identifier`.
+>
+> Lo relevante no es el CI. **Un Firefox actual lo habría rechazado igual**, así que esta sección
+> entera —el motivo por el que los portales no nacen lisiados— estaba **rota en cualquier máquina
+> moderna**. Pasaba en la máquina de desarrollo solo porque su OpenSSL es más permisivo.
+>
+> La lección, y es la misma que el fallo de dependencias no declaradas: **una suite verde en una
+> sola máquina no dice que el programa funcione.** El CI no es burocracia; fue lo único capaz de
+> encontrar los dos. Una CA generada antes de la corrección se detecta y se regenera sola, avisando
+> al operador de que la reimporte.
 
 ### Por qué NO se incrustan sitios ajenos en la UI local
 
