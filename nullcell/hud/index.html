@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NULLCELL HUD</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <span class="brand">NULLCELL</span>
+  <span class="sep">·</span>
+  <span id="nid" class="mono dim">conectando…</span>
+  <span class="grow"></span>
+  <span id="phase" class="pill">arrancando</span>
+  <span id="circuits-count" class="pill">0 circuitos</span>
+</header>
+
+<main>
+  <section class="panel" id="panel-circuits">
+    <h2>Circuitos <span class="hint">onion, 3 saltos (§5)</span></h2>
+    <div id="circuits" class="list">
+      <p class="waiting">esperando a que se construya el primero…</p>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-node">
+    <h2>Celda <span class="hint">§3, §7</span></h2>
+    <dl id="node" class="kv">
+      <dt>estado</dt><dd class="waiting">esperando datos del nodo</dd>
+    </dl>
+  </section>
+
+  <section class="panel wide" id="panel-console">
+    <h2>Consola <span class="hint">eventos en vivo por WebSocket · tope 500 líneas (§16)</span></h2>
+    <div id="console" class="console" aria-live="polite"></div>
+  </section>
+</main>
+
+<footer class="bar small">
+  <span id="link" class="dim">desconectado</span>
+  <span class="grow"></span>
+  <span class="dim">M3 · HUD de depuración · sin circuitos no hay anonimato de red</span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

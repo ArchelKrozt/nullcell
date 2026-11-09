@@ -644,6 +644,10 @@ El HUD **no es solo decoración, es la herramienta de depuración del proyecto**
 circuitos en vivo vale oro cuando se está construyendo la capa onion. Por eso se parte en dos:
 
 - **M3**: HUD mínimo y feo — circuitos, saltos, RTT, consola de eventos. Para depurar.
+  **Construido.** `ncell node --hud`, en `gateway/localui.py` y `hud/`. Las cuatro reglas duras
+  están verificadas por tests que nombran el ataque que cada una detiene: sin token 401, token
+  falso 401, `Host` ajeno 403 (DNS rebinding), CSP sin nada externo. Cero peticiones externas y
+  cero colores literales fuera de `:root` son también tests, no buenas intenciones.
 - **M7**: el HUD completo con buscador, portales, sellos, topología y la piel cyberpunk.
 
 ## 10. Anti-abuso, seguridad y modelo de amenaza

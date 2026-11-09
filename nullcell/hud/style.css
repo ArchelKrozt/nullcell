@@ -1,0 +1,136 @@
+/* NULLCELL HUD — §9.
+ *
+ * Every colour is a token on :root, never a literal below it: that is what
+ * makes ~/.nullcell/theme.css possible (§9, Personalización) and what the CI
+ * check enforces. Dark only, declared as a decision rather than an oversight.
+ *
+ * Zero external requests. No CDN, no web fonts, no telemetry: a single
+ * external request would tell the ordinary internet there is a node here.
+ */
+:root {
+  --bg: #07090d;
+  --surface: #0d1117;
+  --surface-2: #121922;
+  --border: #1d2733;
+  --text: #e6edf3;
+  --text-dim: #7d8da3;
+  --accent-data: #22d3ee;
+  --accent-alert: #ff00ff;
+  --grid: #101722;
+  --glow: 0 0 6px color-mix(in srgb, var(--accent-data) 45%, transparent);
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-display: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 3px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background:
+    linear-gradient(transparent 95%, var(--grid) 95%) 0 0 / 100% 24px,
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.bar.small { border-top: 1px solid var(--border); border-bottom: none; font-size: 11px; }
+footer.bar { margin-top: auto; }
+.grow { flex: 1; }
+.brand { font-family: var(--font-display); font-weight: 700; letter-spacing: .14em; color: var(--accent-data); }
+.sep, .dim { color: var(--text-dim); }
+.mono { font-family: var(--font-mono); }
+
+.pill {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1px 8px;
+  color: var(--accent-data);
+  background: var(--surface-2);
+}
+.pill[data-state="warn"] { color: var(--accent-alert); border-color: var(--accent-alert); }
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 16px;
+}
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  min-width: 0;
+}
+.panel.wide { grid-column: 1 / -1; }
+.panel h2 {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.hint { text-transform: none; letter-spacing: 0; font-weight: 400; opacity: .7; }
+
+/* §9: no panel appears empty without saying what it is waiting for. */
+.waiting { color: var(--text-dim); font-style: italic; margin: 4px 0; }
+
+.list { display: flex; flex-direction: column; gap: 8px; }
+
+.circuit { border-left: 2px solid var(--accent-data); padding-left: 10px; }
+.circuit[data-state="building"] { border-left-color: var(--text-dim); }
+.circuit[data-state="down"] { border-left-color: var(--accent-alert); }
+.circuit .head { display: flex; gap: 10px; align-items: baseline; }
+.circuit .id { color: var(--accent-data); text-shadow: var(--glow); }
+.circuit .rtt { margin-left: auto; color: var(--text-dim); }
+.hops { display: flex; align-items: center; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+.hop { color: var(--text); }
+.hop .dot { color: var(--accent-data); }
+.wire { color: var(--border); }
+
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; margin: 0; }
+.kv dt { color: var(--text-dim); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+
+.console {
+  height: 260px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  content-visibility: auto;      /* §16: 200+ rows must not burn CPU */
+  contain-intrinsic-size: 260px;
+}
+.line { display: flex; gap: 8px; white-space: pre-wrap; }
+.line .t { color: var(--text-dim); flex: none; }
+.line .k { color: var(--accent-data); flex: none; min-width: 13ch; }
+.line[data-level="warn"] .k { color: var(--accent-alert); }
+.line .n { color: var(--text-dim); flex: none; }
+
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; }
+  body { font-size: 12px; }
+}
+
+/* §9: respected by any theme, not only the default one. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+  :root { --glow: none; }
+  body { background: var(--bg); }
+}

@@ -228,6 +228,8 @@ def cmd_node(
     ] = None,
     seed: Annotated[list[str] | None, typer.Option("--seed", help="<nid>@host:puerto")] = None,
     lan: Annotated[bool, typer.Option("--lan", help="baliza multicast en la LAN")] = False,
+    hud: Annotated[bool, typer.Option("--hud", help="panel local de depuración (§9)")] = False,
+    hud_port: Annotated[int, typer.Option("--hud-port")] = 9180,
 ) -> None:
     """Arranca una celda completa: enlace, DHT y mantenimiento."""
     identity, cfg = _load_identity()
@@ -261,6 +263,31 @@ def cmd_node(
             known = await node.bootstrap(seeds)
             typer.echo(f"  bootstrap: {known} celdas")
 
+        local_ui = None
+        if hud:
+            from nullcell.gateway.events import EventBus
+            from nullcell.gateway.localui import LocalUI
+
+            bus = EventBus()
+
+            def hud_snapshot() -> dict:
+                return {
+                    "nid": identity.nid,
+                    "phase": "listo" if len(node.table) else "conectando",
+                    "peers": len(node.table),
+                    "relays": len(node.table),
+                    "guards": [],
+                    "records": node.store.stats["records"],
+                    "legs": 0,
+                    "circuits": [],
+                }
+
+            local_ui = LocalUI(hud_snapshot, bus, port=hud_port)
+            url = await local_ui.start()
+            bus.emit("node.up", f"{identity.short} escuchando en [{host}]:{port}")
+            typer.secho(f"  HUD: {url}", fg=typer.colors.CYAN)
+            typer.echo("        (el token va en la URL una sola vez; luego es una cookie)")
+
         maintenance = asyncio.create_task(pex.run_periodically(node))
         try:
             while True:
@@ -271,6 +298,8 @@ def cmd_node(
                 )
         finally:
             maintenance.cancel()
+            if local_ui is not None:
+                await local_ui.close()
             if beacon is not None:
                 beacon.stop()
             save_peers(cfg.path_peers, node.table.all_nodes())

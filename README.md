@@ -3,17 +3,22 @@
 Red P2P cifrada y anónima: circuitos onion de 3 saltos sobre QUIC, sin autoridades de directorio.
 Direcciones `.null` autocertificadas. Python 3.11+, sin root.
 
-**Estado: M2.** Identidad, marcos, enlace QUIC verificado y **DHT Kademlia** funcionan: 30 celdas
-se encuentran solas desde una semilla, publican descriptores firmados y resuelven nombres.
+**Estado: M3.** Identidad, marcos, enlace QUIC verificado, DHT Kademlia y **circuitos onion de
+3 saltos** funcionan, con selección de ruta, control de flujo y un HUD de depuración.
 
-> ### ⚠ Todavía no es una red anónima
+> ### ⚠ Aún no la uses para nada que requiera anonimato
 >
-> **No hay circuitos onion (M3) ni rendezvous (M4).** §7 decidió que todo el tráfico de DHT de un
-> cliente va por circuitos, precisamente porque una consulta directa revela tu IP y *qué estás
-> buscando* a nodos cualesquiera. Los circuitos llegan en M3, así que hoy las consultas van por
-> enlace directo y **no protegen tu anonimato**. La capa de transporte está diseñada para
-> sustituirse (`dht/transport.py`), pero hasta entonces esto es su capa de enlace y su directorio,
-> no la red del título. No lo uses para nada que requiera anonimato.
+> Los circuitos existen y sus propiedades están verificadas en los tests: el salto del medio no
+> conoce origen ni destino, y una trama manipulada derribael circuito. **Pero faltan dos cosas:**
+>
+> 1. **El DHT todavía no va por circuitos.** §7 decidió que sí, y `dht/transport.py` es la costura
+>    preparada para ello, pero hoy `DirectTransport` consulta por enlace directo y revela tu IP y
+>    qué buscas a nodos cualesquiera.
+> 2. **No hay rendezvous (M4),** así que no hay servicios ocultos ni anonimato del lado que
+>    publica.
+>
+> Y el límite de fondo de §7 sigue en pie: la selección descentralizada de relevos es un problema
+> abierto de investigación. Lo que hay es la mitigación pragmática, no una solución demostrada.
 
 La arquitectura completa está en [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md). Las
 referencias `§N` de este README y del código apuntan a ese documento.
@@ -70,6 +75,7 @@ ncell ping <nid> --addr 127.0.0.1:4433     # enlace verificado + RTT
 ncell node --port 4433 --announce IP:4433 --seed <nid>@host:puerto   # celda completa
 ncell publish panaderia --announce IP:4433 --seed <nid>@host:puerto  # registra nombre
 ncell resolve panaderia.null --seed <nid>@host:puerto                # busca en el DHT
+ncell node --hud                                                     # con panel local
 ```
 
 `--seed` es necesario mientras `bootstrap.json` esté vacío: no hay red pública todavía.
@@ -94,7 +100,12 @@ NULLCELL_HOME=/tmp/b ncell ping <NID-de-a> --addr 127.0.0.1:4455
 | L1b Kademlia, descriptores firmados con PoW, bootstrap y PEX (§7) | ✅ |
 | Nombres legibles `panaderia.null` first-come en el DHT (§8) | ✅ |
 | Baliza multicast en LAN, opt-in (§7) | ✅ |
-| L2a circuitos onion de 3 saltos (§5) | ❌ M3 |
+| L2a circuitos onion de 3 saltos, Noise NK, digest anti-etiquetado (§5) | ✅ |
+| Selección de ruta: guards fijados, diversidad de prefijos, antigüedad mínima (§7) | ✅ |
+| SENDME por circuito y por stream, vida del circuito (§5) | ✅ |
+| HUD mínimo de depuración, `ncell node --hud` (§9) | ✅ |
+| Diversidad por ASN (§7) | ❌ — ver §7, el motivo está documentado |
+| DHT por circuitos (decisión 8) | ❌ M4 |
 | L2b rendezvous, intro points (§6) | ❌ M4 |
 | SOCKS5, CA local, `ncell browse`, `ncell host` (§8) | ❌ M5 |
 | Buscador y HUD (§8, §9) | ❌ M7 |
