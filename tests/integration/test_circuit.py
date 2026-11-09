@@ -211,3 +211,109 @@ async def test_destroy_releases_the_circuit_id():
             circuit.destroy()
             assert circuit.circ_id not in link.circuits
             assert circuit.closed
+
+
+# ------------------------------------------------------------- flow control §5
+async def test_sendme_lets_more_than_a_window_through():
+    """§5: without SENDME the client blocks for ever at CIRCUIT_WINDOW frames.
+
+    This is the test that proves the credit loop closes, not just that the
+    windows exist.
+    """
+    from nullcell.onion.flow import CIRCUIT_WINDOW
+
+    frames = CIRCUIT_WINDOW * 2 + 50
+    async with relays(2) as cells, circuit_through(cells) as circuit:
+        delivered = 0
+        done = asyncio.Event()
+
+        def sink(leg, header) -> None:
+            nonlocal delivered
+            if header.rcmd == RelayCmd.DATA:
+                delivered += 1
+                if delivered >= frames:
+                    done.set()
+
+        cells[-1].service.on_relay_message = sink
+        payload = b"x" * 64
+        sender = asyncio.create_task(_send_many(circuit, payload, frames, stream_id=11))
+        await asyncio.wait_for(done.wait(), timeout=60.0)
+        await asyncio.wait_for(sender, timeout=10.0)
+
+        assert delivered >= frames
+        assert circuit.flow.circuit_send.available > 0, "window never reopened"
+
+
+async def _send_many(circuit, payload: bytes, count: int, *, stream_id: int) -> None:
+    for i in range(count):
+        await circuit.send_data(payload, stream_id=stream_id)
+        if i % 128 == 0:
+            await asyncio.sleep(0)
+
+
+async def test_window_closes_when_nobody_returns_credit():
+    """The other half of the same property: credit really is required.
+
+    Note *which* window shuts. ``STREAM_WINDOW`` (500) is half of
+    ``CIRCUIT_WINDOW`` (1000), so a single stream runs out of stream credit
+    first and can never exhaust the circuit on its own — which is the point of
+    metering at two levels instead of one (§5).
+    """
+    from nullcell.onion.flow import CIRCUIT_WINDOW, STREAM_WINDOW
+
+    assert STREAM_WINDOW < CIRCUIT_WINDOW
+
+    async with relays(1) as cells, circuit_through(cells) as circuit:
+        cells[0].service.on_relay_message = None
+        # Suppress the relay's own SENDME so no window can reopen.
+        cells[0].service._return_credit = lambda leg, stream_id: None  # noqa: SLF001
+
+        sender = asyncio.create_task(_send_many(circuit, b"x", CIRCUIT_WINDOW + 10, stream_id=12))
+        await asyncio.sleep(0.5)
+        assert not sender.done(), "the sender should be waiting for a SENDME"
+        assert circuit.flow.stream_send(12).blocked, "the stream window should shut first"
+        assert not circuit.flow.circuit_send.blocked
+        assert circuit.flow.circuit_send.available == CIRCUIT_WINDOW - STREAM_WINDOW - 1
+
+        sender.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sender
+
+
+# ------------------------------------------------------ circuit lifetime §5
+async def test_a_used_circuit_stops_taking_new_streams():
+    from nullcell.onion import circuit as circuit_mod
+
+    async with relays(1) as cells, circuit_through(cells) as circuit:
+        await circuit.send_data(b"hola", stream_id=1)
+        assert circuit.accepts_new_streams
+
+        circuit.first_use_at -= circuit_mod.MAX_DIRTY + 1  # pretend 10 min passed
+        assert not circuit.accepts_new_streams
+        await circuit.send_data(b"sigue", stream_id=1)  # an existing stream is fine
+        with pytest.raises(CircuitError, match="takes no new streams"):
+            await circuit.send_data(b"nuevo", stream_id=2)
+
+
+async def test_retirement_policy():
+    from nullcell.onion import circuit as circuit_mod
+
+    async with relays(1) as cells, circuit_through(cells) as circuit:
+        assert circuit.should_retire == (False, "")
+
+        circuit.bytes_sent = circuit_mod.MAX_BYTES
+        retire, why = circuit.should_retire
+        assert retire and "GB" in why
+
+        circuit.bytes_sent = 0
+        circuit.created_at -= circuit_mod.MAX_AGE + 1
+        retire, why = circuit.should_retire
+        assert retire and "min old" in why
+
+
+async def test_an_unused_circuit_is_given_back():
+    from nullcell.onion import circuit as circuit_mod
+
+    async with relays(1) as cells, circuit_through(cells) as circuit:
+        circuit.created_at -= circuit_mod.MAX_IDLE + 1
+        assert circuit.should_retire == (True, "never used")

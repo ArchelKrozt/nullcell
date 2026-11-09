@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 import logging
 import struct
+import time
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -36,12 +37,33 @@ from nullcell.core.frames import (
     parse_relay_payload,
 )
 from nullcell.net.link import FrameProtocol
+from nullcell.onion.flow import FlowControl, FlowError
 from nullcell.onion.handshake_nk import HANDSHAKE_LEN, HandshakeError, Initiator
 from nullcell.onion.layers import LayerError, OnionPath
 
-__all__ = ["BUILD_TIMEOUT", "Circuit", "CircuitError", "Hop"]
+__all__ = [
+    "BUILD_TIMEOUT",
+    "MAX_AGE",
+    "MAX_BYTES",
+    "MAX_DIRTY",
+    "MAX_IDLE",
+    "Circuit",
+    "CircuitError",
+    "Hop",
+]
 
 BUILD_TIMEOUT: Final[float] = 30.0
+
+#: §5 — a circuit stops taking *new* streams after this long in use. A circuit
+#: that lives for hours links together everything you did for hours.
+MAX_DIRTY: Final[float] = 600.0
+#: An unused circuit is given back rather than left occupying volunteers.
+MAX_IDLE: Final[float] = 600.0
+#: Forward secrecy inside a live circuit. §5 called for a rekey; it is
+#: implemented as **retirement and rebuild** instead — see `should_retire`.
+MAX_BYTES: Final[int] = 1024**3
+MAX_AGE: Final[float] = 3600.0
+
 _EXTEND_HEADER = struct.Struct("!32s32sH")  # ed25519 pub, x25519 pub, endpoint length
 
 log = logging.getLogger("nullcell.onion")
@@ -78,6 +100,14 @@ class Circuit:
         self.path = OnionPath()
         self.hops: list[Hop] = []
         self.closed = False
+        self.flow = FlowControl()
+        self.created_at = time.monotonic()
+        self.first_use_at: float | None = None
+        self.last_use_at = self.created_at
+        self.bytes_sent = 0
+        self.frames_sent = 0
+        self.frames_received = 0
+        self.streams: set[int] = set()
         self._pending: dict[int, asyncio.Future[bytes]] = {}
         self._handshakes: list[Initiator] = []
         self.on_data: object = None  # Callable[[int, int, bytes], None]
@@ -90,6 +120,42 @@ class Circuit:
     @property
     def ready(self) -> bool:
         return not self.closed and len(self.path) > 0
+
+    @property
+    def age(self) -> float:
+        return time.monotonic() - self.created_at
+
+    @property
+    def dirty_for(self) -> float:
+        """Seconds since this circuit was first used. 0 if still clean."""
+        return 0.0 if self.first_use_at is None else time.monotonic() - self.first_use_at
+
+    @property
+    def accepts_new_streams(self) -> bool:
+        """§5: no new streams on a circuit that has been in use for 10 minutes."""
+        return self.ready and self.dirty_for < MAX_DIRTY
+
+    @property
+    def should_retire(self) -> tuple[bool, str]:
+        """Whether to tear this circuit down, and why.
+
+        §5 asked for a **rekey** of the layer keys every 1 GB or hour. This
+        implements it as **retirement and rebuild** instead: an in-place rekey
+        needs a protocol message that §5 does not define, and a fresh circuit
+        gives the same forward secrecy with none of that machinery — it is also
+        what Tor does. Said here rather than left as a silent divergence.
+        """
+        if self.closed:
+            return True, "already closed"
+        if self.bytes_sent >= MAX_BYTES:
+            return True, f"carried {self.bytes_sent / 1024**3:.1f} GB"
+        if self.age >= MAX_AGE:
+            return True, f"{self.age / 60:.0f} min old"
+        if self.first_use_at is None and self.age >= MAX_IDLE:
+            return True, "never used"
+        if self.dirty_for >= MAX_DIRTY and not self.streams:
+            return True, "idle since its last stream"
+        return False, ""
 
     def describe(self) -> str:
         """``m4x…kz > p9z…aa > q2w…bb`` — what the HUD shows (§9)."""
@@ -164,6 +230,47 @@ class Circuit:
             raise CircuitError("circuit is closed")
         payload = pack_relay_payload(rcmd, data, stream_id=stream_id)
         self.link.send_frame(self.circ_id, Cmd.RELAY, self.path.wrap(payload, hop_index))
+        self.frames_sent += 1
+
+    async def send_data(self, data: bytes, *, stream_id: int) -> None:
+        """Send application data, waiting for credit if the window is shut (§5).
+
+        Only DATA is metered. Control messages go through
+        :meth:`send_relay` unmetered, or a circuit with a closed window could
+        never be told to shut down.
+        """
+        if not stream_id:
+            raise CircuitError("application data needs a non-zero stream id")
+        if self.first_use_at is None:
+            self.first_use_at = time.monotonic()
+        if not self.accepts_new_streams and stream_id not in self.streams:
+            raise CircuitError(
+                f"circuit has been in use for {self.dirty_for / 60:.0f} min "
+                "and takes no new streams (§5)"
+            )
+        await self.flow.acquire(stream_id)
+        self.streams.add(stream_id)
+        self.send_relay(RelayCmd.DATA, data, stream_id=stream_id)
+        self.bytes_sent += len(data)
+        self.last_use_at = time.monotonic()
+
+    def _on_sendme(self, stream_id: int) -> None:
+        """A hop returned credit."""
+        try:
+            if stream_id:
+                self.flow.stream_send(stream_id).credit()
+            else:
+                self.flow.circuit_send.credit()
+        except FlowError as exc:
+            self._tear_down(f"bad SENDME: {exc}")
+
+    def _on_delivered(self, stream_id: int) -> None:
+        """Return credit for data we received."""
+        circuit_due, stream_due = self.flow.on_delivered(stream_id)
+        if circuit_due:
+            self.send_relay(RelayCmd.SENDME, b"")
+        if stream_due:
+            self.send_relay(RelayCmd.SENDME, b"", stream_id=stream_id)
 
     def _expect(self, want: int) -> asyncio.Future[bytes]:
         future: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
@@ -191,9 +298,15 @@ class Circuit:
             self._tear_down(str(exc))
             return
 
+        self.frames_received += 1
         header = parse_relay_payload(plain)
         if self._resolve(header.rcmd, header.payload):
             return
+        if header.rcmd == RelayCmd.SENDME:
+            self._on_sendme(header.stream_id)
+            return
+        if header.rcmd == RelayCmd.DATA:
+            self._on_delivered(header.stream_id)
         if header.rcmd == RelayCmd.END or header.rcmd == RelayCmd.TRUNCATED:
             self._tear_down(f"hop reported {RelayCmd(header.rcmd).name}")
             return

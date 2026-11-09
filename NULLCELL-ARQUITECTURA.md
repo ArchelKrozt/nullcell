@@ -211,7 +211,7 @@ marco con datos reales (§16).
 |---|---|---|
 | Streams nuevos sobre un circuito ya usado | máx. **10 min** desde su primer uso | Un circuito de horas enlaza entre sí todo lo que hiciste durante horas |
 | Circuito sin streams activos | se cierra a los **10 min** | No regalar recursos a los relevos voluntarios |
-| Rekey de las claves de capa | cada **1 GB o 1 h**, lo que llegue antes | Forward secrecy dentro del propio circuito |
+| ~~Rekey de las claves de capa~~ → **retiro y reconstrucción** | cada **1 GB o 1 h**, lo que llegue antes | Forward secrecy. **Cambiado en M3:** un rekey en sitio necesita un mensaje de protocolo que §5 no define, y un circuito nuevo da la misma propiedad sin esa maquinaria. Es también lo que hace Tor. Queda dicho en lugar de divergir en silencio |
 | Caída de un salto intermedio | `DESTROY` hacia los dos lados, los streams reciben `END`, el cliente reconstruye y **reintenta solo los streams idempotentes** | Un POST a medias no se puede repetir en silencio |
 
 ### Control de flujo y relleno
@@ -312,6 +312,19 @@ dirección: ver §3) guarda dos tipos de registro firmado:
   y, si se puede resolver, ASN distintos. (La regla original decía solo "/16", que es pensamiento
   IPv4: en IPv6 un solo operador reparte /48 a mansalva y tres saltos "distintos" podrían estar en
   la misma mano.)
+
+  > **Hueco conocido, de M3: la diversidad por ASN no está implementada**, y conviene saber por
+  > qué. Resolver el ASN de una IP exige o un conjunto de datos externo —una dependencia y un
+  > problema de obsolescencia— o una consulta de red, que revela qué relevos estás sopesando. La
+  > diversidad por prefijo es un **proxy más débil**, y está etiquetada como tal en el código: dos
+  > /16 distintos pueden estar perfectamente en el mismo operador. Un hostname como endpoint no
+  > tiene prefijo comparable y queda fuera de la selección, por la misma razón: resolverlo
+  > delataría.
+  >
+  > Y la política completa, también de M3: **guards fijados 30 días** (§7 decía "semanas"),
+  > guards en prefijos distintos entre sí, y **antigüedad observada mínima de 10 minutos** antes de
+  > enrutar por un relevo. La consecuencia honesta de lo último es que **un nodo recién instalado
+  > no puede construir un circuito durante 10 minutos**, y el mensaje de error lo dice así.
 - **PoW** (argon2id) en el descriptor + antigüedad mínima observada → encarece inundar la red de
   relays falsos.
 - **Verificación cruzada:** se consulta el mismo descriptor a varios nodos de buckets distintos

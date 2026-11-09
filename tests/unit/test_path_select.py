@@ -1,0 +1,178 @@
+"""Path selection — §7, guards and diversity."""
+
+import os
+import random
+import time
+
+import pytest
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+from nullcell.onion.handshake_nk import x25519_public_bytes
+from nullcell.onion.path_select import (
+    GUARD_COUNT,
+    GUARD_LIFETIME,
+    MIN_OBSERVED_AGE,
+    GuardSet,
+    PathError,
+    RelayCandidate,
+    endpoint_prefix,
+    select_path,
+)
+
+OLD = time.time() - MIN_OBSERVED_AGE - 60
+
+
+def candidate(host: str, *, first_seen: float = OLD, pow_bits: int = 9) -> RelayCandidate:
+    return RelayCandidate(
+        pub=os.urandom(32),
+        x25519=x25519_public_bytes(X25519PrivateKey.generate()),
+        endpoints=[f"{host}:4433"],
+        first_seen=first_seen,
+        pow_bits=pow_bits,
+    )
+
+
+def diverse(count: int, **kwargs) -> list[RelayCandidate]:
+    """Candidates each in its own /16."""
+    return [candidate(f"10.{i}.0.1", **kwargs) for i in range(count)]
+
+
+# ------------------------------------------------------------------- prefixes
+def test_prefix_is_16_for_ipv4_and_48_for_ipv6():
+    assert endpoint_prefix("1.2.3.4:443") == endpoint_prefix("1.2.9.9:443")
+    assert endpoint_prefix("1.2.3.4:443") != endpoint_prefix("1.3.3.4:443")
+    assert endpoint_prefix("[2001:db8::1]:443") == endpoint_prefix("[2001:db8:0:1::9]:443")
+    assert endpoint_prefix("[2001:db9::1]:443") != endpoint_prefix("[2001:db8::1]:443")
+
+
+def test_hostname_has_no_comparable_prefix():
+    """Resolving it would leak which relays we are weighing up (§7)."""
+    assert endpoint_prefix("relay.example.com:443") is None
+    assert endpoint_prefix("nonsense") is None
+
+
+# ---------------------------------------------------------------------- guards
+def test_guards_are_pinned_and_reused(tmp_path):
+    pool = diverse(10)
+    guards = GuardSet(tmp_path / "guards.json")
+    first = set(guards.ensure(pool))
+    assert len(first) == GUARD_COUNT
+    assert set(guards.ensure(pool)) == first, "guards must not churn"
+
+
+def test_guards_survive_a_restart(tmp_path):
+    pool = diverse(10)
+    path = tmp_path / "guards.json"
+    chosen = set(GuardSet(path).ensure(pool))
+    assert set(GuardSet(path).pubs) == chosen
+
+
+def test_guards_are_in_distinct_prefixes(tmp_path):
+    """Two guards behind one operator is one guard with extra steps."""
+    pool = [candidate("10.1.0.1"), candidate("10.1.0.2"), candidate("10.1.0.3")]
+    guards = GuardSet(tmp_path / "guards.json")
+    assert len(guards.ensure(pool)) == 1
+
+
+def test_young_relays_are_not_eligible_as_guards(tmp_path):
+    fresh = diverse(5, first_seen=time.time())
+    guards = GuardSet(tmp_path / "guards.json")
+    assert guards.ensure(fresh) == []
+
+
+def test_expired_guards_are_retired(tmp_path):
+    pool = diverse(10)
+    guards = GuardSet(tmp_path / "guards.json")
+    guards.ensure(pool)
+    assert len(guards) == GUARD_COUNT
+    later = time.time() + GUARD_LIFETIME + 1
+    guards.ensure(pool, now=later)
+    # Retired and replaced in one pass, so the set stays full.
+    assert len(guards) == GUARD_COUNT
+
+
+def test_corrupt_guard_file_is_survivable(tmp_path):
+    path = tmp_path / "guards.json"
+    path.write_text("no soy json")
+    assert GuardSet(path).pubs == []
+
+
+# ------------------------------------------------------------------ selection
+def test_selects_three_hops_starting_at_a_guard(tmp_path):
+    pool = diverse(12)
+    guards = GuardSet(tmp_path / "guards.json")
+    hops = select_path(pool, guards, rng=random.Random(1))
+    assert len(hops) == 3
+    assert guards.is_guard(hops[0].pub)
+
+
+def test_all_three_hops_are_in_distinct_prefixes(tmp_path):
+    pool = diverse(12)
+    guards = GuardSet(tmp_path / "guards.json")
+    for seed in range(20):
+        hops = select_path(pool, guards, rng=random.Random(seed))
+        prefixes = [endpoint_prefix(h.endpoints[0]) for h in hops]
+        assert len(set(prefixes)) == 3, f"seed {seed} reused a prefix"
+
+
+def test_no_hop_appears_twice(tmp_path):
+    pool = diverse(12)
+    guards = GuardSet(tmp_path / "guards.json")
+    for seed in range(20):
+        hops = select_path(pool, guards, rng=random.Random(seed))
+        assert len({h.pub for h in hops}) == 3
+
+
+def test_a_concentrated_network_is_refused_not_fudged(tmp_path):
+    """§7: better no circuit than one the user believes is diverse."""
+    pool = [candidate("10.1.0.1"), candidate("10.1.0.2"), candidate("10.1.0.3")]
+    guards = GuardSet(tmp_path / "guards.json")
+    with pytest.raises(PathError, match="distinct prefixes"):
+        select_path(pool, guards)
+
+
+def test_too_few_relays_is_refused(tmp_path):
+    guards = GuardSet(tmp_path / "guards.json")
+    with pytest.raises(PathError, match="age and work floors"):
+        select_path(diverse(2), guards)
+
+
+def test_a_brand_new_node_must_wait(tmp_path):
+    guards = GuardSet(tmp_path / "guards.json")
+    with pytest.raises(PathError, match="min before it can build"):
+        select_path(diverse(10, first_seen=time.time()), guards)
+
+
+def test_relays_below_the_work_floor_are_excluded(tmp_path):
+    guards = GuardSet(tmp_path / "guards.json")
+    with pytest.raises(PathError):
+        select_path(diverse(10, pow_bits=2), guards, min_pow_bits=9)
+
+
+def test_candidate_from_a_relay_descriptor():
+    import asyncio
+
+    from nullcell.core.identity import Identity
+    from nullcell.dht import pow as P
+    from nullcell.dht import records as R
+
+    original = dict(P.DIFFICULTY)
+    P.DIFFICULTY.update(dict.fromkeys(P.DIFFICULTY, 3))
+    try:
+        identity = Identity.generate()
+        body = R.RelayBody(
+            endpoints=["10.0.0.1:4433"], x25519=identity.x25519_public, bandwidth=5_000_000
+        ).as_dict()
+        record = asyncio.run(R.build(identity, R.RecordType.RELAY, body))
+        found = RelayCandidate.from_record(record, pow_bits=9)
+        assert found is not None
+        assert found.pub == identity.public_key
+        assert found.bandwidth == 5_000_000
+        assert found.prefixes == {"10.0.0.0/16"}
+
+        name = asyncio.run(R.build(identity, R.RecordType.NAME, {"name": "x"}))
+        assert RelayCandidate.from_record(name) is None  # wrong record type
+    finally:
+        P.DIFFICULTY.clear()
+        P.DIFFICULTY.update(original)
+        P.shutdown_pool()

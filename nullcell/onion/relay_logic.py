@@ -40,6 +40,7 @@ from nullcell.core.frames import (
 from nullcell.net.link import FrameProtocol
 from nullcell.net.link_manager import LinkManager
 from nullcell.onion.circuit import CircuitError, unpack_extend
+from nullcell.onion.flow import CIRCUIT_INCREMENT, STREAM_INCREMENT, DeliveryCounter
 from nullcell.onion.handshake_nk import HANDSHAKE_LEN, HandshakeError, Responder
 from nullcell.onion.layers import HopCrypto
 
@@ -64,6 +65,13 @@ class CircuitLeg:
     frames_forward: int = 0
     frames_backward: int = 0
     pending_extend: asyncio.Future[bytes] | None = field(default=None, repr=False)
+    #: Receiver side of §5's flow control, for data this hop terminates. The
+    #: client spends credit per DATA frame and would block forever at 1000 if
+    #: nothing here returned any.
+    circuit_recv: DeliveryCounter = field(
+        default_factory=lambda: DeliveryCounter(CIRCUIT_INCREMENT)
+    )
+    stream_recv: dict[int, DeliveryCounter] = field(default_factory=dict)
 
     @property
     def extended(self) -> bool:
@@ -181,6 +189,8 @@ class RelayService:
             return
         if header.rcmd == RelayCmd.EXTENDED:
             return  # only a client consumes these
+        if header.rcmd == RelayCmd.DATA:
+            self._return_credit(leg, header.stream_id)
         if self.on_relay_message is not None:
             self.on_relay_message(leg, header)
             return
@@ -232,11 +242,24 @@ class RelayService:
         self.stats["extended"] += 1
         self._send_back(leg, RelayCmd.EXTENDED, created)
 
-    def _send_back(self, leg: CircuitLeg, rcmd: RelayCmd, data: bytes) -> None:
+    def _return_credit(self, leg: CircuitLeg, stream_id: int) -> None:
+        """Send SENDME back once a window's worth has been delivered (§5)."""
+        if leg.circuit_recv.record():
+            self._send_back(leg, RelayCmd.SENDME, b"")
+        if stream_id:
+            counter = leg.stream_recv.get(stream_id)
+            if counter is None:
+                counter = leg.stream_recv[stream_id] = DeliveryCounter(STREAM_INCREMENT)
+            if counter.record():
+                self._send_back(leg, RelayCmd.SENDME, b"", stream_id=stream_id)
+
+    def _send_back(
+        self, leg: CircuitLeg, rcmd: RelayCmd, data: bytes, *, stream_id: int = 0
+    ) -> None:
         """Send one of *our own* messages back to the client."""
         # Tag written in place on one mutable copy, as in OnionPath.wrap: a
         # set_digest() call would allocate a second payload per frame (§16).
-        buf = bytearray(pack_relay_payload(rcmd, data))
+        buf = bytearray(pack_relay_payload(rcmd, data, stream_id=stream_id))
         buf[DIGEST_OFFSET : DIGEST_OFFSET + DIGEST_SIZE] = leg.crypto.tag_backward(buf)
         leg.prev_link.send_frame(leg.prev_circ_id, Cmd.RELAY, leg.crypto.crypt_backward(bytes(buf)))
 
