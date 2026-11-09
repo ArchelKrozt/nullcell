@@ -541,11 +541,40 @@ def cmd_browse(
     http_port: Annotated[
         int, typer.Option("--http-port", help="proxy HTTP para clientes sin SOCKS; 0 lo desactiva")
     ] = 9151,
+    bind: Annotated[
+        str,
+        typer.Option(
+            "--bind",
+            help="dónde escuchan los proxies. Loopback, o la IP de una VPN "
+            "para tus propios dispositivos. Una dirección pública se rechaza (docs/VPS.md)",
+        ),
+    ] = "127.0.0.1",
     launch: Annotated[bool, typer.Option("--launch/--no-launch")] = True,
 ) -> None:
     """Levanta el proxy y abre un navegador con perfil aislado (§8)."""
     identity, cfg = _load_identity()
     home = config.home()
+
+    from nullcell.gateway.bind import BindRefused, check_bind, is_loopback
+
+    try:
+        bind = check_bind(bind)
+    except BindRefused as refused:
+        typer.secho(f"✗ {refused}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(2) from None
+
+    remote = not is_loopback(bind)
+    if remote:
+        # Said before anything starts, because it changes who is trusted.
+        typer.secho(
+            f"⚠  escuchando en {bind}, fuera de loopback.\n"
+            "   Quien alcance esa dirección lee el texto claro de todo lo que pase por\n"
+            "   aquí y sale a la red en nombre de este nodo. Que la VPN sea la única\n"
+            "   vía hasta ella es tu parte del trato (docs/VPS.md).",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        launch = False  # no hay navegador que abrir en un servidor
 
     from nullcell.gateway.browser_profile import BrowserProfile
     from nullcell.gateway.localca import LocalCA
@@ -581,21 +610,28 @@ def cmd_browse(
                     multiplexed=True,
                 )
 
-            proxy = Socks5Proxy(open_session, ca, port=socks_port)
+            proxy = Socks5Proxy(open_session, ca, host=bind, port=socks_port)
             port = await proxy.start()
-            typer.secho(f"✓ SOCKS5 en 127.0.0.1:{port}", fg=typer.colors.GREEN)
+            typer.secho(f"✓ SOCKS5 en {bind}:{port}", fg=typer.colors.GREEN)
             typer.echo("  resolución de nombres remota obligatoria (§8)")
 
             http = None
             if http_port:
                 from nullcell.gateway.http_proxy import HttpProxy
 
-                http = HttpProxy(open_session, ca, port=http_port)
-                typer.echo(f"✓ proxy HTTP en 127.0.0.1:{await http.start()} (sólo CONNECT, §8)")
+                http = HttpProxy(open_session, ca, host=bind, port=http_port)
+                typer.echo(f"✓ proxy HTTP en {bind}:{await http.start()} (sólo CONNECT, §8)")
             typer.echo(
                 f"  guards fijados: {len(runtime.guards)} · relevos usables: "
                 f"{len(runtime.directory.usable(min_pow_bits=runtime.paths.min_pow_bits))}"
             )
+
+            if remote:
+                typer.echo(
+                    f"\n  Para que otro dispositivo abra https://…{ids.SUFFIX} necesita esta CA:\n"
+                    f"    {ca.cert_path}\n"
+                    f"  Instalarla allí es system-wide: lee el apartado de riesgos de docs/VPS.md."
+                )
 
             url = f"https://{ids.parse_hostname(target)}{ids.SUFFIX}" if target else "about:blank"
             if launch:

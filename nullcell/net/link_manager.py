@@ -18,7 +18,7 @@ from nullcell.net.link import FrameProtocol
 from nullcell.net.quic_link import open_link
 from nullcell.net.stream import StreamMux
 
-__all__ = ["LinkManager", "parse_endpoint"]
+__all__ = ["LinkManager", "parse_endpoint", "peer_address"]
 
 MAX_LINKS: Final[int] = 64
 
@@ -36,6 +36,23 @@ def parse_endpoint(endpoint: str) -> tuple[str, int]:
     return host, int(port)
 
 
+def peer_address(link: FrameProtocol) -> str | None:
+    """``host:port`` a link is actually sending to, or None.
+
+    Dual-stack sockets report an IPv4 peer as ``::ffff:1.2.3.4``; that is
+    normalised back, or every IPv4 relay would look like one enormous IPv6
+    prefix and §7's diversity rule would stop discriminating.
+    """
+    quic = getattr(link, "_quic", None)
+    address = quic.get_peer_address() if quic is not None else None
+    if not address:
+        return None
+    host, port = str(address[0]), int(address[1])
+    if host.startswith("::ffff:") and "." in host:
+        host = host[len("::ffff:") :]
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
 @dataclass(slots=True)
 class _Held:
     link: FrameProtocol
@@ -50,6 +67,13 @@ class LinkManager:
         self._links: dict[bytes, _Held] = {}
         self._locks: dict[bytes, asyncio.Lock] = {}
         self.max_links = max_links
+        #: Where each peer actually answered, as ``host:port``. Recorded only
+        #: for connections that succeeded, so it leaks nothing: we had to know
+        #: the address to send the packet. §7 refuses to *resolve* a relay we
+        #: are merely weighing up; this is the opposite situation, and it is
+        #: what lets a relay announced by DNS name still be checked for
+        #: diversity (§7).
+        self.observed: dict[bytes, str] = {}
 
     def __len__(self) -> int:
         return len(self._links)
@@ -92,6 +116,9 @@ class LinkManager:
                     await self._evict_one()
                 mux = StreamMux(link)
                 self._links[pub] = _Held(link=link, mux=mux, stack=stack)
+                address = peer_address(link)
+                if address is not None:
+                    self.observed[pub] = address
                 return mux
 
             raise ConnectionError(f"could not reach {ids.short(nid)}: {last}")

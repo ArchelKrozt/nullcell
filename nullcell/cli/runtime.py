@@ -122,7 +122,27 @@ class Runtime:
                     record, pow_bits=record.measure_pow_bits()
                 ):
                     learned += 1
+        self.absorb_observations()
         return learned
+
+    def absorb_observations(self) -> int:
+        """Tell the directory where relays actually answered (§7).
+
+        Every link we opened knows the address it is sending to, and a relay
+        announced by DNS name can only be checked for diversity once somebody
+        has seen its address. Nothing extra leaks: these are connections that
+        already happened.
+        """
+        noted = 0
+        for transport in (self.node.transport, self.relay):
+            links = getattr(transport, "links", None)
+            observed = getattr(links, "observed", None) if links is not None else None
+            if not observed:
+                continue
+            for pub, address in observed.items():
+                self.directory.note_observed(pub, address)
+                noted += 1
+        return noted
 
     async def keep_learning(self, interval: float = 120.0) -> None:
         while True:

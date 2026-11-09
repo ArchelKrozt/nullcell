@@ -74,6 +74,7 @@ Antes que nada, porque definen el proyecto:
 | **el relevo en sí** | [`nullcell/cli/relay.py`](nullcell/cli/relay.py) |
 | **cómo se ensambla una celda** | [`nullcell/cli/runtime.py`](nullcell/cli/runtime.py) |
 | **operar un relevo en serio** | [`docs/RELAY_OP.md`](docs/RELAY_OP.md) |
+| **montarlo en un VPS y entrar desde el teléfono** | [`docs/VPS.md`](docs/VPS.md) |
 | **el formato de cable** | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) |
 
 ## Instalación

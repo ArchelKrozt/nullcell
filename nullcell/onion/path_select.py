@@ -85,6 +85,10 @@ class RelayCandidate:
     bandwidth: int = 0
     first_seen: float = field(default_factory=time.time)
     pow_bits: int = 0
+    #: The address we saw when we actually connected, if we ever did. It wins
+    #: over anything derived from the descriptor: the descriptor is what the
+    #: relay *claims*, this is what we observed.
+    observed: str | None = None
 
     @classmethod
     def from_record(cls, record: Record, *, pow_bits: int = 0) -> RelayCandidate | None:
@@ -129,7 +133,25 @@ class RelayCandidate:
 
     @property
     def prefixes(self) -> set[str]:
+        """Diversity keys for this relay.
+
+        An observed address replaces the claimed ones entirely. A relay that
+        announces a hostname and resolves to an address we have already seen on
+        another hop is the same machine, and only the observation can tell us.
+        """
+        if self.observed is not None:
+            observed = endpoint_prefix(self.observed)
+            if observed is not None:
+                return {observed}
         return {p for p in (endpoint_prefix(e) for e in self.endpoints) if p}
+
+    def note_observed(self, address: str) -> None:
+        """Record the address this relay actually answered on.
+
+        Called after a connection succeeds, so it leaks nothing: we had to
+        know the address to send the packet.
+        """
+        self.observed = address
 
     def as_hop(self) -> Hop:
         return Hop(pub=self.pub, x25519=self.x25519, endpoints=list(self.endpoints))
@@ -139,18 +161,50 @@ class RelayCandidate:
 
 
 def endpoint_prefix(endpoint: str) -> str | None:
-    """Network prefix of an endpoint: /16 for IPv4, /48 for IPv6.
+    """A diversity key for an endpoint: /16 for IPv4, /48 for IPv6.
 
-    Returns None for a hostname, which cannot be compared without resolving it
-    — and resolving it would leak which relays we are weighing up.
+    For a **hostname**, the key is its parent domain — ``vps1.example.com``
+    becomes ``dns:example.com`` — because resolving it would leak which relays
+    we are weighing up, and §7 will not trade that for convenience.
+
+    That is deliberately **conservative**: two relays under one domain are
+    treated as one operator, which they usually are. It refuses some paths that
+    would have been fine (two strangers behind the same dynamic-DNS provider),
+    and §7 says refusing beats fudging — a circuit the user believes is diverse
+    and is not is worse than no circuit.
+
+    A hostname key is still **weaker** than an IP one, because an unresolved
+    name cannot be compared against an IP: ``relay.alice.com`` and
+    ``203.0.113.9`` might be the same machine and we cannot tell. That gap
+    closes as soon as we actually connect, which is what
+    :meth:`RelayCandidate.note_observed` is for — once a connection exists we
+    already know the address, so recording it leaks nothing new.
     """
     try:
         host, _ = parse_endpoint(endpoint)
-        address = ipaddress.ip_address(host)
     except ValueError:
         return None
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return _domain_key(host)
     bits = _IPV4_PREFIX if address.version == 4 else _IPV6_PREFIX
     return str(ipaddress.ip_network(f"{host}/{bits}", strict=False))
+
+
+def _domain_key(host: str) -> str | None:
+    """``vps1.example.com`` -> ``dns:example.com``.
+
+    Two labels, which is wrong for ``example.co.uk`` — it would key on
+    ``co.uk`` and treat every British relay as one operator. Wrong in the
+    conservative direction: it refuses paths rather than allowing a
+    concentrated one. A public-suffix list would fix it and is a dependency
+    and a staleness problem, the same trade §7 already made for ASNs.
+    """
+    labels = [label for label in host.strip(".").lower().split(".") if label]
+    if len(labels) < 2:
+        return None  # a bare name says nothing about who runs it
+    return "dns:" + ".".join(labels[-2:])
 
 
 class GuardSet:
@@ -271,10 +325,19 @@ def select_path(
         if c.pow_bits >= min_pow_bits and c.observed_for(now) >= MIN_OBSERVED_AGE and c.prefixes
     ]
     if len(usable) < length:
+        # Say which floor was not met. The first version blamed age and work
+        # for everything, which sent an operator deploying with a DNS name
+        # looking in entirely the wrong place.
+        total = len(candidates)
+        no_prefix = sum(1 for c in candidates if not c.prefixes)
+        too_young = sum(1 for c in candidates if c.observed_for(now) < MIN_OBSERVED_AGE)
+        too_cheap = sum(1 for c in candidates if c.pow_bits < min_pow_bits)
         raise PathError(
-            f"only {len(usable)} relays meet the age and work floors; "
-            f"{length} needed. A new node has to wait "
-            f"{MIN_OBSERVED_AGE / 60:.0f} min before it can build a circuit"
+            f"{len(usable)} of {total} relays are usable, {length} needed. "
+            f"Excluded: {too_young} too recently observed "
+            f"(§7 requires {MIN_OBSERVED_AGE / 60:.0f} min), "
+            f"{too_cheap} below the proof-of-work floor, "
+            f"{no_prefix} with no comparable endpoint"
         )
 
     guards.ensure(usable, now=now)
@@ -350,6 +413,12 @@ class RelayDirectory:
             and relay.observed_for(now) >= MIN_OBSERVED_AGE
             and relay.prefixes
         ]
+
+    def note_observed(self, pub: bytes, address: str) -> None:
+        """Record where a relay actually answered (see ``note_observed``)."""
+        relay = self._relays.get(pub)
+        if relay is not None:
+            relay.note_observed(address)
 
     def forget(self, pub: bytes) -> None:
         self._relays.pop(pub, None)

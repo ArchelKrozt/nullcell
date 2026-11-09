@@ -193,6 +193,7 @@ def test_the_deployment_files_exist():
         "deploy/nullcell-relay.service",
         "deploy/install.sh",
         "docs/RELAY_OP.md",
+        "docs/VPS.md",
     ):
         assert (ROOT / relative).is_file(), f"falta {relative}"
 
@@ -246,3 +247,70 @@ def test_the_image_does_not_run_as_root():
     # than part of the image.
     assert "VOLUME" in dockerfile
     assert "NULLCELL_HOME" in dockerfile
+
+
+# ------------------------------------- M8: la pasarela fuera de loopback (§8)
+def test_the_vps_guide_refuses_the_web_gateway_in_writing():
+    """It is the request this project has to keep saying no to, so the reason
+    lives in the docs rather than only in a conversation."""
+    guide = (ROOT / "docs" / "VPS.md").read_text(encoding="utf-8")
+    assert "tor2web" in guide
+    assert "mismo sitio" in guide  # the same-origin collapse, named
+
+
+def test_the_vps_guide_states_the_three_risks_it_adds():
+    guide = (ROOT / "docs" / "VPS.md").read_text(encoding="utf-8")
+    for claim in (
+        "ve texto claro",  # the VPS is a trusted hop
+        "system-wide",  # the CA on a phone
+        "NameConstraints",  # and that its enforcement is unverified
+        "no lo he verificado",
+    ):
+        assert claim in guide, f"la guía no dice: {claim}"
+
+
+def test_browse_refuses_a_public_bind():
+    """`--bind 0.0.0.0` on a VPS is an open proxy that reads plaintext. The CLI
+    must refuse it, not warn: a warning scrolls past."""
+    from typer.testing import CliRunner
+
+    from nullcell.cli.main import app
+
+    runner = CliRunner()
+    for address in ("0.0.0.0", "::", "8.8.8.8", "mivps.com"):
+        result = runner.invoke(app, ["browse", "--bind", address, "--no-launch"])
+        assert result.exit_code == 2, f"aceptó --bind {address}"
+
+
+def test_browse_help_points_at_the_guide():
+    from typer.testing import CliRunner
+
+    from nullcell.cli.main import app
+
+    result = CliRunner().invoke(app, ["browse", "--help"])
+    assert result.exit_code == 0
+    assert "docs/VPS.md" in result.stdout.replace("\n", " ")
+
+
+def test_the_guide_names_the_ca_file_that_actually_exists():
+    """I wrote `ca.crt` from memory; it is `ca.pem`, and an operator following
+    that line gets an empty `cat` and no idea why the phone distrusts the
+    certificate."""
+    from nullcell.gateway.localca import LocalCA
+
+    name = LocalCA(pathlib.Path("/tmp/x")).cert_path.name
+    guide = (ROOT / "docs" / "VPS.md").read_text(encoding="utf-8")
+    assert name in guide, f"la guía no nombra {name}"
+
+
+def test_the_guide_only_uses_commands_that_exist():
+    """Same class of rot: `ncell node --once` was in the first draft and the
+    flag does not exist."""
+    import re
+
+    from nullcell.cli.main import app
+
+    known = {command.name or command.callback.__name__ for command in app.registered_commands}
+    guide = (ROOT / "docs" / "VPS.md").read_text(encoding="utf-8")
+    used = set(re.findall(r"\bncell ([a-z]+)", guide))
+    assert used <= known, f"la guía usa comandos inexistentes: {sorted(used - known)}"

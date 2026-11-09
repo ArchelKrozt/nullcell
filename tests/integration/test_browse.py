@@ -157,8 +157,17 @@ async def fetch(port: int, hostname: str, ca: LocalCA, path: str = "/"):
     writer.close()
 
     head, _, body = raw.partition(b"\r\n\r\n")
-    status = int(head.split(b" ")[1])
-    return status, body, head, peer_cert
+    parts = head.split(b" ")
+    if len(parts) < 2:
+        # Diagnosability, not a fix: `test_a_second_resource_reuses_the_same
+        # _splice` failed once inside a full-suite run and never again in 12
+        # loaded repeats plus 3 clean suites, so the cause is still unknown.
+        # Parsing a status line that is not there raised IndexError and said
+        # nothing; this says what arrived instead.
+        raise AssertionError(
+            f"no HTTP response for {path!r}: received {len(raw)} bytes, {raw[:120]!r}"
+        )
+    return int(parts[1]), body, head, peer_cert
 
 
 # ---------------------------------------------------------------- the §13 test

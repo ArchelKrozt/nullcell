@@ -23,6 +23,7 @@ OLD = time.time() - MIN_OBSERVED_AGE - 60
 
 
 def candidate(host: str, *, first_seen: float = OLD, pow_bits: int = 9) -> RelayCandidate:
+    """A usable relay at *host*. ``host`` may be an IP or a name."""
     return RelayCandidate(
         pub=os.urandom(32),
         x25519=x25519_public_bytes(X25519PrivateKey.generate()),
@@ -45,10 +46,52 @@ def test_prefix_is_16_for_ipv4_and_48_for_ipv6():
     assert endpoint_prefix("[2001:db9::1]:443") != endpoint_prefix("[2001:db8::1]:443")
 
 
-def test_hostname_has_no_comparable_prefix():
-    """Resolving it would leak which relays we are weighing up (§7)."""
-    assert endpoint_prefix("relay.example.com:443") is None
+def test_a_hostname_is_keyed_by_its_parent_domain():
+    """§7 will not resolve a relay it is merely weighing up, so a hostname is
+    keyed by its domain instead of being excluded. Excluding it meant a relay
+    announced by DNS name — the normal way to deploy on a VPS — could not be
+    part of any circuit at all."""
+    assert endpoint_prefix("relay.example.com:443") == "dns:example.com"
+    assert endpoint_prefix("otro.example.com:443") == "dns:example.com"
+    assert endpoint_prefix("relay.example.net:443") == "dns:example.net"
+
+
+def test_a_bare_name_still_has_no_key():
+    """It says nothing about who runs it."""
+    assert endpoint_prefix("localhost:4433") is None
     assert endpoint_prefix("nonsense") is None
+
+
+def test_two_relays_under_one_domain_count_as_one_operator():
+    """Conservative on purpose: it refuses some paths that would have been
+    fine, and §7 says refusing beats fudging."""
+    assert endpoint_prefix("a.midominio.com:1") == endpoint_prefix("b.midominio.com:2")
+
+
+def test_an_observed_address_wins_over_the_announced_one():
+    """A relay announcing a hostname might resolve to an address already used
+    by another hop, and only an observation can tell us."""
+    relay = candidate("relay.example.com")
+    assert relay.prefixes == {"dns:example.com"}
+    relay.note_observed("203.0.113.9:4433")
+    assert relay.prefixes == {"203.0.0.0/16"}
+
+
+def test_an_observation_unmasks_two_names_as_one_machine(tmp_path):
+    """The gap a hostname key cannot close on its own."""
+    first, second, third = (
+        candidate("a.uno.com"),
+        candidate("b.dos.com"),
+        candidate("c.tres.com"),
+    )
+    guards = GuardSet(tmp_path / "guards.json")
+    assert len(select_path([first, second, third], guards)) == 3
+
+    # Now we learn that two of them answer on the same machine.
+    first.note_observed("203.0.113.9:4433")
+    second.note_observed("203.0.113.9:4433")
+    with pytest.raises(PathError):
+        select_path([first, second, third], GuardSet(tmp_path / "g2.json"))
 
 
 # ---------------------------------------------------------------------- guards
@@ -133,13 +176,13 @@ def test_a_concentrated_network_is_refused_not_fudged(tmp_path):
 
 def test_too_few_relays_is_refused(tmp_path):
     guards = GuardSet(tmp_path / "guards.json")
-    with pytest.raises(PathError, match="age and work floors"):
+    with pytest.raises(PathError, match="2 of 2 relays are usable"):
         select_path(diverse(2), guards)
 
 
 def test_a_brand_new_node_must_wait(tmp_path):
     guards = GuardSet(tmp_path / "guards.json")
-    with pytest.raises(PathError, match="min before it can build"):
+    with pytest.raises(PathError, match="too recently observed"):
         select_path(diverse(10, first_seen=time.time()), guards)
 
 

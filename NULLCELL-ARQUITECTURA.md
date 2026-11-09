@@ -326,14 +326,33 @@ dirección: ver §3) guarda dos tipos de registro firmado:
   > qué. Resolver el ASN de una IP exige o un conjunto de datos externo —una dependencia y un
   > problema de obsolescencia— o una consulta de red, que revela qué relevos estás sopesando. La
   > diversidad por prefijo es un **proxy más débil**, y está etiquetada como tal en el código: dos
-  > /16 distintos pueden estar perfectamente en el mismo operador. Un hostname como endpoint no
-  > tiene prefijo comparable y queda fuera de la selección, por la misma razón: resolverlo
-  > delataría.
+  > /16 distintos pueden estar perfectamente en el mismo operador.
+  >
+  > **⚠ Fallo corregido en M8, y es el que bloqueaba el despliegue real.** Un endpoint con nombre
+  > DNS no tiene prefijo comparable —resolverlo delataría qué relevos estás sopesando— y la regla
+  > escrita aquí era "queda fuera de la selección". El efecto medido: **seis relevos anunciados
+  > por nombre, que es como se despliega normalmente en un VPS, no formaban ninguna ruta**; los
+  > mismos seis por IP daban tres saltos. La red se volvía inconstruible justo para quien la
+  > monta bien.
+  >
+  > La corrección distingue dos cosas que la regla confundía. **Resolver especulativamente está
+  > prohibido** y sigue prohibido: la consulta DNS revela la lista de candidatos antes de elegir.
+  > Pero **la dirección de una conexión que ya ocurrió es gratis** —ya la pagamos— así que
+  > `LinkManager` la anota y el directorio la guarda (`note_observed`). Mientras no hay
+  > observación, el endpoint se indexa por su **dominio padre** (`relay.midominio.com` →
+  > `dns:midominio.com`), que es deliberadamente conservador: dos subdominios del mismo dominio
+  > cuentan como un solo operador y la ruta se rechaza. Cuando llega la observación, el prefijo
+  > real sustituye al dominio, y dos nombres distintos que resuelven a la misma máquina quedan
+  > al descubierto.
+  >
+  > Un nombre desnudo, sin punto (`localhost`), sigue sin clave: no dice nada de quién lo opera.
   >
   > Y la política completa, también de M3: **guards fijados 30 días** (§7 decía "semanas"),
   > guards en prefijos distintos entre sí, y **antigüedad observada mínima de 10 minutos** antes de
   > enrutar por un relevo. La consecuencia honesta de lo último es que **un nodo recién instalado
-  > no puede construir un circuito durante 10 minutos**, y el mensaje de error lo dice así.
+  > no puede construir un circuito durante 10 minutos**, y el mensaje de error lo dice así:
+  > desde M8 nombra **cuál** de los suelos falló y a cuántos relevos excluyó cada uno, porque
+  > "no hay ruta" mandaba a leer el código para distinguir una red vacía de una red joven.
   >
   > **⚠ Fallo corregido en M6, y merece quedar escrito.** La antigüedad se tomaba del campo `ts`
   > del descriptor, que es **lo que el publicador afirma**. Un atacante publicaba una avalancha de

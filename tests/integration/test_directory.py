@@ -268,7 +268,7 @@ async def test_the_observed_age_floor_is_local_not_claimed(tmp_path, monkeypatch
         builder = PathBuilder(directory, GuardSet(tmp_path / "g.json"), min_pow_bits=9)
         assert not builder.ready
         assert "antigüedad observada" in builder.why_not_ready()
-        with pytest.raises(PathError, match="age and work floors"):
+        with pytest.raises(PathError, match="too recently observed"):
             builder.build()
 
 
