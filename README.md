@@ -3,10 +3,10 @@
 Red P2P cifrada y anónima: circuitos onion de 3 saltos sobre QUIC, sin autoridades de directorio.
 Direcciones `.null` autocertificadas. Python 3.11+, sin root.
 
-**Estado: M5.** Un navegador abre `https://<nid>.null` con candado, sobre 6 saltos, contra un
-portal que **no tiene IP pública, ni UPnP, ni un solo puerto abierto**. Una página con 20 recursos
-carga en **129 ms** en laboratorio, y las 20 peticiones viajan por **una sola sesión de
-rendezvous**.
+**Estado: M6.** `https://panaderia.null` funciona: un cliente que conoce **solo un nombre** lo
+resuelve en el DHT, elige sus propios circuitos con guards fijados y diversidad de prefijos, y
+carga la página sobre 6 saltos. El portal no tiene IP pública, ni UPnP, ni un solo puerto abierto.
+Nada se pasa de mano en mano.
 
 > ### ⚠ Qué está verificado y qué sigue abierto
 >
@@ -87,9 +87,14 @@ ncell publish panaderia --announce IP:4433 --seed <nid>@host:puerto  # registra 
 ncell resolve panaderia.null --seed <nid>@host:puerto                # busca en el DHT
 ncell node --hud                                                     # con panel local
 
-ncell host ./mi-sitio --relay <nid>@host:puerto:<x25519-hex> ...      # publicar un portal
-ncell browse <nid> --relay ... --service-key <hex>                    # abrir el navegador
+ncell host ./mi-sitio --name panaderia --title "La Panadería"         # publicar un portal
+ncell browse panaderia.null                                          # abrir el navegador
+ncell resolve panaderia.null                                         # ver sus puntos de enlace
 ```
+
+`ncell host` y `ncell browse` eligen sus rutas con la selección de §7. Un nodo recién instalado
+**tiene que esperar 10 minutos** antes de poder construir un circuito: es el suelo de antigüedad
+observada, y el mensaje de error lo dice en lugar de fallar en seco.
 
 `--seed` es necesario mientras `bootstrap.json` esté vacío: no hay red pública todavía.
 
@@ -125,7 +130,13 @@ NULLCELL_HOME=/tmp/b ncell ping <NID-de-a> --addr 127.0.0.1:4455
 | SOCKS5 con resolución remota obligatoria (§8) | ✅ |
 | CA local con restricción de nombres, solo en el perfil dedicado (§8) | ✅ |
 | `ncell browse`: perfil aislado de Firefox (§8) | ✅ sin probar con Firefox real |
+| Descriptores de portal, publicación y renovación automática (§8) | ✅ |
+| Nombres legibles resueltos en el DHT, alias locales, nombres reservados (§8, §9) | ✅ |
+| Selección de ruta de §7 en uso real: un solo sitio elige saltos | ✅ |
 | HTTP/2 hacia el navegador (§16, táctica 7) | ❌ — reclasificada, ver §16 |
+| Buscador: índice, crawler, gossip, ranking (§8) | ❌ M7 |
+| HUD completo: portales, topología, sellos (§9) | ❌ M7 |
+| Relleno `PADDING` (§5) | ❌ — la mitigación de §10 contra análisis de tráfico no existe aún |
 | Diversidad por ASN (§7) | ❌ — ver §7, el motivo está documentado |
 | L2b rendezvous, intro points (§6) | ❌ M4 |
 | SOCKS5, CA local, `ncell browse`, `ncell host` (§8) | ❌ M5 |

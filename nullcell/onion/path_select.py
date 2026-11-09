@@ -45,6 +45,8 @@ from nullcell.onion.circuit import Hop
 
 __all__ = [
     "CIRCUIT_LENGTH",
+    "PathBuilder",
+    "RelayDirectory",
     "GUARD_COUNT",
     "GUARD_LIFETIME",
     "MIN_OBSERVED_AGE",
@@ -91,6 +93,12 @@ class RelayCandidate:
         The record must already have passed
         :func:`nullcell.dht.records.verify`; this only checks that the body has
         the shape a relay descriptor needs.
+
+        ``first_seen`` is left at *now*, deliberately. §7 asks for **observed**
+        age, and a record's own timestamp is the publisher's claim: taking it
+        at face value let an attacker backdate a flood of fresh identities by
+        hours and clear the age floor instantly, which is the whole of the
+        mitigation gone. :class:`RelayDirectory` keeps the real first sighting.
         """
         if record.type is not RecordType.RELAY:
             return None
@@ -108,7 +116,6 @@ class RelayCandidate:
             x25519=x25519,
             endpoints=clean,
             bandwidth=int(body.get("bw", 0) or 0),
-            first_seen=float(record.ts),
             pow_bits=pow_bits,
         )
 
@@ -294,3 +301,133 @@ def select_path(
             "The network is too small or too concentrated for a diverse path"
         )
     return [c.as_hop() for c in chosen]
+
+
+class RelayDirectory:
+    """Relays this node has actually seen, and when it first saw each (§7).
+
+    Separate from the DHT store on purpose. The store holds records; this holds
+    **observations**, and the difference is the security property: §7's age
+    floor is meaningless if a publisher can assert its own age, so the first
+    sighting recorded here is local, monotonic and unforgeable by anyone else.
+
+    Re-publication refreshes a relay's keys and endpoints without resetting the
+    clock, which is what makes waiting the cost it is meant to be.
+    """
+
+    def __init__(self) -> None:
+        self._relays: dict[bytes, RelayCandidate] = {}
+
+    def __len__(self) -> int:
+        return len(self._relays)
+
+    def ingest(self, record: Record, *, pow_bits: int = 0) -> RelayCandidate | None:
+        """Note a verified relay descriptor. Returns the candidate, or None."""
+        fresh = RelayCandidate.from_record(record, pow_bits=pow_bits)
+        if fresh is None:
+            return None
+        known = self._relays.get(fresh.pub)
+        if known is None:
+            self._relays[fresh.pub] = fresh
+            return fresh
+        # Refresh what it says, keep when we first saw it.
+        known.x25519 = fresh.x25519
+        known.endpoints = fresh.endpoints
+        known.bandwidth = fresh.bandwidth
+        known.pow_bits = max(known.pow_bits, fresh.pow_bits)
+        return known
+
+    def candidates(self, *, now: float | None = None) -> list[RelayCandidate]:
+        return list(self._relays.values())
+
+    def usable(self, *, min_pow_bits: int = 0, now: float | None = None) -> list[RelayCandidate]:
+        """Candidates past the age and work floors of §7."""
+        now = time.time() if now is None else now
+        return [
+            relay
+            for relay in self._relays.values()
+            if relay.pow_bits >= min_pow_bits
+            and relay.observed_for(now) >= MIN_OBSERVED_AGE
+            and relay.prefixes
+        ]
+
+    def forget(self, pub: bytes) -> None:
+        self._relays.pop(pub, None)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<RelayDirectory {len(self)} relays, {len(self.usable())} usable>"
+
+
+class PathBuilder:
+    """Turns a directory of relays into circuit paths (§7).
+
+    The single place that decides which relays a circuit goes through. Every
+    circuit in the node should come from here, or the guard pinning and prefix
+    diversity of §7 are documentation rather than behaviour.
+    """
+
+    def __init__(
+        self,
+        directory: RelayDirectory,
+        guards: GuardSet,
+        *,
+        min_pow_bits: int = 0,
+        rng: random.Random | None = None,
+    ) -> None:
+        self.directory = directory
+        self.guards = guards
+        self.min_pow_bits = min_pow_bits
+        self.rng = rng or random.Random()
+
+    def build(self, *, length: int = CIRCUIT_LENGTH, ending_at: Hop | None = None) -> list[Hop]:
+        """A path of *length* hops, optionally ending at a given relay.
+
+        ``ending_at`` is how a path to a specific intro point or rendezvous
+        point is built: the last hop is fixed, the rest still obey the guard
+        and diversity rules.
+        """
+        if ending_at is None:
+            return select_path(
+                self.directory.candidates(),
+                self.guards,
+                length=length,
+                min_pow_bits=self.min_pow_bits,
+                rng=self.rng,
+            )
+
+        prefix = select_path(
+            [c for c in self.directory.candidates() if c.pub != ending_at.pub],
+            self.guards,
+            length=length - 1,
+            min_pow_bits=self.min_pow_bits,
+            rng=self.rng,
+        )
+        taken = {p for hop in prefix for p in _hop_prefixes(hop)}
+        if taken & _hop_prefixes(ending_at):
+            raise PathError(
+                f"{ending_at.short} shares a prefix with the path to it; "
+                "§7 does not allow two hops of one circuit in one prefix"
+            )
+        return [*prefix, ending_at]
+
+    @property
+    def ready(self) -> bool:
+        return len(self.directory.usable(min_pow_bits=self.min_pow_bits)) >= CIRCUIT_LENGTH
+
+    def why_not_ready(self) -> str:
+        """A message that says what is missing, not just that something is."""
+        total = len(self.directory)
+        usable = len(self.directory.usable(min_pow_bits=self.min_pow_bits))
+        if total == 0:
+            return "no se conoce ningún relevo todavía: hace falta bootstrap (§7)"
+        if usable < CIRCUIT_LENGTH:
+            return (
+                f"{total} relevos conocidos, {usable} usables. §7 exige "
+                f"{MIN_OBSERVED_AGE / 60:.0f} min de antigüedad observada, así que "
+                "una celda recién instalada tiene que esperar"
+            )
+        return ""
+
+
+def _hop_prefixes(hop: Hop) -> set[str]:
+    return {p for p in (endpoint_prefix(e) for e in hop.endpoints) if p}

@@ -220,6 +220,34 @@ async def _transient_node(identity, seeds):
     return node
 
 
+async def _runtime(identity, cfg, *, endpoints=None, seeds=None, listen=None):
+    """Assemble a cell, join the network, and learn which relays exist.
+
+    Every command that touches the network goes through here, so §7's guard
+    pinning and prefix diversity apply to every circuit rather than to the ones
+    that happened to remember.
+    """
+    from nullcell.cli.runtime import Runtime
+
+    runtime = Runtime.assemble(identity, config.home(), endpoints=endpoints)
+    if listen is not None:
+        await runtime.listen(*listen)
+
+    if seeds:
+        known = await runtime.node.bootstrap(seeds)
+        typer.echo(f"  bootstrap: {known} celdas")
+        learned = await runtime.learn_relays()
+        typer.echo(f"  relevos observados: {learned}")
+    return runtime
+
+
+def _require_paths(runtime) -> None:
+    if runtime.paths.ready:
+        return
+    typer.secho(f"✗ {runtime.paths.why_not_ready()}", fg=typer.colors.RED, err=True)
+    raise typer.Exit(1)
+
+
 @app.command("node")
 def cmd_node(
     port: Annotated[int, typer.Option("--port", "-p")] = 4433,
@@ -229,40 +257,43 @@ def cmd_node(
     ] = None,
     seed: Annotated[list[str] | None, typer.Option("--seed", help="<nid>@host:puerto")] = None,
     lan: Annotated[bool, typer.Option("--lan", help="baliza multicast en la LAN")] = False,
+    relay: Annotated[
+        bool, typer.Option("--relay/--no-relay", help="prestar ancho de banda")
+    ] = False,
     hud: Annotated[bool, typer.Option("--hud", help="panel local de depuración (§9)")] = False,
     hud_port: Annotated[int, typer.Option("--hud-port")] = 9180,
 ) -> None:
-    """Arranca una celda completa: enlace, DHT y mantenimiento."""
+    """Arranca una celda completa: enlace, DHT, circuitos y mantenimiento."""
     identity, cfg = _load_identity()
-
-    from nullcell.dht.kademlia import KademliaNode
-    from nullcell.dht.transport import DirectTransport
-    from nullcell.discovery import pex
-    from nullcell.discovery.bootstrap import save_peers
-    from nullcell.net.listener import Listener
-
     endpoints = [announce] if announce else [f"127.0.0.1:{port}"]
 
+    from nullcell.discovery import pex
+    from nullcell.discovery.bootstrap import save_peers
+
     async def run() -> None:
-        node = KademliaNode(identity, DirectTransport(), endpoints=endpoints)
-        listener = Listener(identity, host, port, on_link=node.attach)
-        await listener.start()
         typer.secho(f"✓ {identity.short} escuchando en [{host}]:{port}", fg=typer.colors.GREEN)
+        runtime = await _runtime(
+            identity, cfg, endpoints=endpoints, seeds=_seeds(seed), listen=(host, port)
+        )
         typer.echo(f"  dirección: {identity.hostname}")
         typer.echo(f"  anuncia:   {', '.join(endpoints)}")
+
+        if relay:
+            # §10: opt-in, always. Publishing the descriptor is what makes this
+            # cell routable by other people.
+            stored = await runtime.publisher.publish_relay(endpoints)
+            typer.secho(f"✓ relevo opt-in: descriptor en {stored} celdas", fg=typer.colors.GREEN)
+            runtime.spawn(runtime.publisher.renew_forever(endpoints=endpoints))
+        else:
+            typer.echo("  relevo: desactivado (--relay para prestar ancho de banda)")
 
         beacon = None
         if lan:
             from nullcell.discovery.mdns import Beacon
 
-            beacon = Beacon(identity, endpoints, on_peer=node.table.add)
+            beacon = Beacon(identity, endpoints, on_peer=runtime.node.table.add)
             await beacon.start()
             typer.echo("  baliza LAN activa")
-
-        seeds = _seeds(seed)
-        if seeds:
-            known = await node.bootstrap(seeds)
-            typer.echo(f"  bootstrap: {known} celdas")
 
         local_ui = None
         if hud:
@@ -270,42 +301,28 @@ def cmd_node(
             from nullcell.gateway.localui import LocalUI
 
             bus = EventBus()
-
-            def hud_snapshot() -> dict:
-                return {
-                    "nid": identity.nid,
-                    "phase": "listo" if len(node.table) else "conectando",
-                    "peers": len(node.table),
-                    "relays": len(node.table),
-                    "guards": [],
-                    "records": node.store.stats["records"],
-                    "legs": 0,
-                    "circuits": [],
-                }
-
-            local_ui = LocalUI(hud_snapshot, bus, port=hud_port)
+            local_ui = LocalUI(runtime.status, bus, port=hud_port)
             url = await local_ui.start()
             bus.emit("node.up", f"{identity.short} escuchando en [{host}]:{port}")
             typer.secho(f"  HUD: {url}", fg=typer.colors.CYAN)
-            typer.echo("        (el token va en la URL una sola vez; luego es una cookie)")
 
-        maintenance = asyncio.create_task(pex.run_periodically(node))
+        runtime.spawn(pex.run_periodically(runtime.node))
+        runtime.spawn(runtime.keep_learning())
         try:
             while True:
                 await asyncio.sleep(30)
+                status = runtime.status()
                 typer.echo(
-                    f"  [{len(node.table)} celdas] {node.store.stats} rpc={node.stats['rpc_in']}"
-                    f"/{node.stats['rpc_out']}"
+                    f"  [{status['peers']} celdas · {status['relays']} relevos usables · "
+                    f"{status['legs']} circuitos servidos] {status['phase']}"
                 )
         finally:
-            maintenance.cancel()
             if local_ui is not None:
                 await local_ui.close()
             if beacon is not None:
                 beacon.stop()
-            save_peers(cfg.path_peers, node.table.all_nodes())
-            listener.close()
-            await node.close()
+            save_peers(cfg.path_peers, runtime.node.table.all_nodes())
+            await runtime.close()
 
     try:
         asyncio.run(run())
@@ -318,35 +335,31 @@ def cmd_publish(
     name: Annotated[str | None, typer.Argument(help="Nombre legible a registrar")] = None,
     announce: Annotated[str | None, typer.Option("--announce")] = None,
     seed: Annotated[list[str] | None, typer.Option("--seed")] = None,
-    ttl: Annotated[int, typer.Option("--ttl")] = 3600,
 ) -> None:
     """Publica el descriptor de esta celda, y opcionalmente un nombre."""
-    identity, _ = _load_identity()
-    from nullcell.dht import records as R
+    identity, cfg = _load_identity()
 
     async def run() -> None:
-        node = await _transient_node(identity, _seeds(seed))
+        runtime = await _runtime(
+            identity, cfg, endpoints=[announce] if announce else None, seeds=_seeds(seed)
+        )
         try:
             if announce:
-                body = R.RelayBody(endpoints=[announce], x25519=identity.x25519_public).as_dict()
-                typer.echo("resolviendo PoW del descriptor…")
-                record = await R.build(identity, R.RecordType.RELAY, body, ttl=ttl)
-                count = await node.store_record(record)
+                typer.echo("resolviendo PoW del descriptor de relevo…")
+                count = await runtime.publisher.publish_relay([announce])
                 typer.secho(f"✓ descriptor en {count} celdas", fg=typer.colors.GREEN)
-
             if name:
                 typer.echo(f"resolviendo PoW de {name}.null (el más caro, §10)…")
-                record = await R.build(identity, R.RecordType.NAME, {"name": name}, ttl=ttl)
-                count = await node.store_record(record)
+                count = await runtime.publisher.publish_name(name)
                 if count:
                     typer.secho(f"✓ {name}.null en {count} celdas", fg=typer.colors.GREEN)
                 else:
                     typer.secho(
-                        f"✗ {name}.null no fue aceptado: puede estar ya registrado",
+                        f"✗ {name}.null no fue aceptado: puede estar ya registrado (§8)",
                         fg=typer.colors.YELLOW,
                     )
         finally:
-            await node.close()
+            await runtime.close()
 
     asyncio.run(run())
 
@@ -355,125 +368,124 @@ def cmd_publish(
 def cmd_resolve(
     target: Annotated[str, typer.Argument(help="Nombre o dirección .null")],
     seed: Annotated[list[str] | None, typer.Option("--seed")] = None,
+    private: Annotated[bool, typer.Option("--private", help="Servicio privado (§6)")] = False,
 ) -> None:
-    """Busca en el DHT un nombre o una dirección."""
-    identity, _ = _load_identity()
-    from nullcell.dht import records as R
+    """Resuelve un nombre o dirección a sus puntos de enlace."""
+    identity, cfg = _load_identity()
+    from nullcell.services.resolver import ResolveError
 
     async def run() -> None:
-        node = await _transient_node(identity, _seeds(seed))
+        runtime = await _runtime(identity, cfg, seeds=_seeds(seed))
         try:
-            bare = ids.parse_hostname(target)
+            typer.echo(f"resolviendo {target}…")
             try:
-                key = ids.decode_nid(bare).routing_key
-                kind = "dirección"
-            except ids.AddressError:
-                key = R.name_key(bare)
-                kind = "nombre"
-
-            typer.echo(f"buscando {kind} {bare}…")
-            found = await node.find_value(key)
-            if not found:
-                typer.secho("✗ sin resultados", fg=typer.colors.YELLOW)
-                raise typer.Exit(1)
-            for record in found:
-                typer.echo(f"  tipo      {record.type}")
-                typer.echo(f"  celda     {record.nid}")
-                typer.echo(f"  cuerpo    {record.body}")
-                typer.echo(f"  edad      {record.age}s · ttl {record.ttl}s")
+                found = await runtime.resolver.resolve(target, private=private)
+            except ResolveError as exc:
+                typer.secho(f"✗ {exc}", fg=typer.colors.YELLOW, err=True)
+                raise typer.Exit(1) from exc
+            typer.echo(f"  celda        {found.nid}")
+            typer.echo(f"  tipo         {found.kind}")
+            if found.title:
+                typer.echo(f"  título       {found.title}")
+            if found.desc:
+                typer.echo(f"  descripción  {found.desc}")
+            if found.tags:
+                typer.echo(f"  etiquetas    {', '.join(found.tags)}")
+            typer.echo(f"  enlaces      {', '.join(p.short for p in found.intro_points)}")
         finally:
-            await node.close()
+            await runtime.close()
 
     asyncio.run(run())
 
 
-# ------------------------------------------------------------------- M5: hosting
-def _relay_hops(specs: list[str] | None):
-    """``<nid>@host:puerto:<x25519-hex>`` -> Hop, for a lab.
-
-    §7's path selection needs a populated DHT and relays observed for ten
-    minutes. ``--relay`` bypasses that for a laboratory, and says so.
-    """
-    from nullcell.onion.circuit import Hop
-
-    hops = []
-    for spec in specs or []:
-        try:
-            nid, _, rest = spec.partition("@")
-            endpoint, _, x25519 = rest.rpartition(":")
-            address = ids.decode_nid(nid)
-            hops.append(
-                Hop(
-                    pub=address.pub,
-                    x25519=bytes.fromhex(x25519),
-                    endpoints=[endpoint],
-                )
-            )
-        except (ids.AddressError, ValueError) as exc:
-            raise typer.BadParameter(
-                f"--relay espera <nid>@host:puerto:<x25519-hex>: {exc}"
-            ) from exc
-    return hops
-
-
+# ------------------------------------------------------------------- M5/M6: web
 @app.command("host")
 def cmd_host(
     directory: Annotated[str, typer.Argument(help="Carpeta del sitio estático")],
-    relay: Annotated[
-        list[str] | None,
-        typer.Option("--relay", help="<nid>@host:puerto:<x25519-hex> (laboratorio)"),
-    ] = None,
-    name: Annotated[str | None, typer.Option("--name", help="Nombre legible a registrar")] = None,
+    announce: Annotated[str | None, typer.Option("--announce")] = None,
     seed: Annotated[list[str] | None, typer.Option("--seed")] = None,
+    name: Annotated[str | None, typer.Option("--name", help="Nombre legible a registrar")] = None,
+    title: Annotated[str, typer.Option("--title")] = "",
+    desc: Annotated[str, typer.Option("--desc")] = "",
+    tag: Annotated[list[str] | None, typer.Option("--tag")] = None,
+    private: Annotated[bool, typer.Option("--private", help="Servicio privado (§6)")] = False,
+    index: Annotated[
+        bool, typer.Option("--index/--no-index", help="Indexar en el buscador")
+    ] = True,
 ) -> None:
     """Publica una carpeta como portal, sin abrir ningún puerto (§8)."""
-    identity, _ = _load_identity()
+    identity, cfg = _load_identity()
     root = Path(directory).expanduser().resolve()
     if not root.is_dir():
         typer.secho(f"✗ {root} no es una carpeta", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 
-    hops = _relay_hops(relay)
-    if len(hops) < 3:
-        typer.secho(
-            "✗ hacen falta 3 relevos. Pásalos con --relay mientras no haya red pública;\n"
-            "  la selección automática de §7 exige un DHT poblado y 10 min de antigüedad "
-            "observada.",
-            fg=typer.colors.RED,
-            err=True,
-        )
-        raise typer.Exit(1)
-
     from nullcell.host.site import SiteHost, static_app
-    from nullcell.onion.service import CircuitManager, HiddenService
+    from nullcell.onion.rendezvous_msgs import INTRO_POINTS
+    from nullcell.onion.service import HiddenService
+    from nullcell.services.descriptor import ServiceDescriptor
 
     async def run() -> None:
-        manager = CircuitManager()
-        service = HiddenService(identity, manager, multiplexed=True)
-        host = SiteHost(static_app(root))
-        await host.start()
-        service.on_session = lambda session: setattr(session, "on_stream", host.serve)
-
-        typer.echo(f"construyendo circuitos hacia {len(hops)} relevos…")
-        established = await service.establish([hops])
-        if not established:
-            typer.secho("✗ no se pudo establecer ningún punto de enlace", fg=typer.colors.RED)
-            raise typer.Exit(1)
-
-        typer.secho(f"✓ portal publicado: {identity.hostname}", fg=typer.colors.GREEN)
-        typer.echo(f"  carpeta:          {root}")
-        typer.echo(f"  puntos de enlace: {established}")
-        typer.echo("  sin IP pública, sin UPnP, sin un puerto abierto (§0)")
-        if name:
-            typer.echo(f"  nombre {name}.null: publícalo con `ncell publish {name}`")
-        typer.echo("\n  Ctrl-C para parar")
+        runtime = await _runtime(
+            identity, cfg, endpoints=[announce] if announce else None, seeds=_seeds(seed)
+        )
         try:
+            _require_paths(runtime)
+            service = HiddenService(identity, runtime.circuits, multiplexed=True)
+            site = SiteHost(static_app(root))
+            await site.start()
+            service.on_session = lambda session: setattr(session, "on_stream", site.serve)
+
+            typer.echo(f"construyendo {INTRO_POINTS} circuitos de 3 saltos…")
+            paths = []
+            for _ in range(INTRO_POINTS):
+                path = runtime.paths.build()
+                paths.append(path)
+            established = await service.establish(paths)
+            if not established:
+                typer.secho("✗ ningún punto de enlace se estableció", fg=typer.colors.RED)
+                raise typer.Exit(1)
+
+            descriptor = ServiceDescriptor(
+                pub=identity.public_key,
+                x25519=service.x25519_public,
+                intro_points=service.intro_points,
+                name=name or "",
+                title=title,
+                desc=desc,
+                tags=list(tag or []),
+            )
+            typer.echo("publicando el descriptor…")
+            stored = await runtime.publisher.publish_service(descriptor, private=private)
+
+            typer.secho(f"✓ portal publicado: {identity.hostname}", fg=typer.colors.GREEN)
+            typer.echo(f"  carpeta:          {root}")
+            typer.echo(f"  puntos de enlace: {established}/{INTRO_POINTS}")
+            typer.echo(f"  descriptor en:    {stored} celdas")
+            typer.echo(f"  clase:            {'privado (§6)' if private else 'portal público'}")
+            typer.echo("  sin IP pública, sin UPnP, sin un puerto abierto (§0)")
+
+            if name and not private:
+                count = await runtime.publisher.publish_name(name)
+                if count:
+                    typer.secho(
+                        f"✓ {name}.null registrado en {count} celdas", fg=typer.colors.GREEN
+                    )
+                else:
+                    typer.secho(f"⚠  {name}.null ya está tomado (§8)", fg=typer.colors.YELLOW)
+            if index and not private:
+                words = await runtime.publisher.publish_keywords(descriptor)
+                typer.echo(f"  indexado bajo {words} entradas de palabra clave (§8)")
+
+            runtime.spawn(
+                runtime.publisher.renew_forever(descriptor=descriptor, private=private, name=name)
+            )
+            typer.echo("\n  Ctrl-C para parar")
             while True:
                 await asyncio.sleep(30)
-                typer.echo(f"  [{host.stats['streams']} streams servidos]")
+                typer.echo(f"  [{site.stats['streams']} streams servidos]")
         finally:
-            await service.close()
-            await manager.close()
+            await runtime.close()
 
     try:
         asyncio.run(run())
@@ -483,22 +495,19 @@ def cmd_host(
 
 @app.command("browse")
 def cmd_browse(
-    target: Annotated[str | None, typer.Argument(help="Dirección .null a abrir")] = None,
-    relay: Annotated[list[str] | None, typer.Option("--relay")] = None,
-    service_x25519: Annotated[
-        str | None, typer.Option("--service-key", help="Clave X25519 del servicio (hex)")
-    ] = None,
+    target: Annotated[str | None, typer.Argument(help="Nombre o dirección .null")] = None,
+    seed: Annotated[list[str] | None, typer.Option("--seed")] = None,
     socks_port: Annotated[int, typer.Option("--socks-port")] = 9150,
     launch: Annotated[bool, typer.Option("--launch/--no-launch")] = True,
 ) -> None:
     """Levanta el proxy y abre un navegador con perfil aislado (§8)."""
-    identity, _ = _load_identity()
+    identity, cfg = _load_identity()
     home = config.home()
 
     from nullcell.gateway.browser_profile import BrowserProfile
     from nullcell.gateway.localca import LocalCA
     from nullcell.gateway.socks5 import Socks5Proxy
-    from nullcell.onion.service import CircuitManager, connect_to_service
+    from nullcell.onion.service import connect_to_service
 
     ca = LocalCA(home / "ca")
     ca.load_or_create()
@@ -510,55 +519,54 @@ def cmd_browse(
     typer.secho(f"✓ perfil aislado en {profile.directory}", fg=typer.colors.GREEN)
     typer.echo(f"  {profile.install_ca(ca.cert_path)}")
 
-    hops = _relay_hops(relay)
-    manager = CircuitManager()
-
-    async def open_session(bare_nid: str):
-        if len(hops) < 3 or not service_x25519:
-            raise RuntimeError(
-                "hacen falta 3 relevos (--relay) y la clave del servicio "
-                "(--service-key) mientras no haya descubrimiento por DHT"
-            )
-        from nullcell.onion.rendezvous_msgs import IntroPointRef
-
-        intro = IntroPointRef(pub=hops[2].pub, x25519=hops[2].x25519, endpoints=hops[2].endpoints)
-        return await connect_to_service(
-            manager,
-            service_pub=ids.decode_nid(bare_nid).pub,
-            service_x25519=bytes.fromhex(service_x25519),
-            intro_point=intro,
-            rendezvous_path=hops,
-            intro_path=hops,
-            multiplexed=True,
-        )
-
     async def run() -> None:
-        proxy = Socks5Proxy(open_session, ca, port=socks_port)
-        port = await proxy.start()
-        typer.secho(f"✓ SOCKS5 en 127.0.0.1:{port}", fg=typer.colors.GREEN)
-        typer.echo("  resolución de nombres remota obligatoria (§8)")
-
-        url = f"https://{ids.parse_hostname(target)}{ids.SUFFIX}" if target else "about:blank"
-        if launch:
-            if profile.launch(url) is None:
-                typer.secho(
-                    "⚠  Firefox no encontrado. Ábrelo a mano con:\n"
-                    f"   firefox -profile {profile.directory} -no-remote {url}",
-                    fg=typer.colors.YELLOW,
-                )
-            else:
-                typer.echo(f"→ abriendo {url}")
-        else:
-            typer.echo(f"→ no se lanza navegador. URL: {url}")
-
-        typer.echo("\n  Ctrl-C para parar")
+        runtime = await _runtime(identity, cfg, seeds=_seeds(seed))
         try:
+            _require_paths(runtime)
+
+            async def open_session(bare_nid: str):
+                """Resolve, then build our own paths for both circuits (§6, §7)."""
+                found = await runtime.resolver.resolve(bare_nid)
+                intro = found.intro_points[0]
+                return await connect_to_service(
+                    runtime.circuits,
+                    service_pub=found.pub,
+                    service_x25519=found.x25519,
+                    intro_point=intro,
+                    rendezvous_path=runtime.paths.build(),
+                    intro_path=runtime.paths.build(ending_at=intro.as_hop()),
+                    multiplexed=True,
+                )
+
+            proxy = Socks5Proxy(open_session, ca, port=socks_port)
+            port = await proxy.start()
+            typer.secho(f"✓ SOCKS5 en 127.0.0.1:{port}", fg=typer.colors.GREEN)
+            typer.echo("  resolución de nombres remota obligatoria (§8)")
+            typer.echo(
+                f"  guards fijados: {len(runtime.guards)} · relevos usables: "
+                f"{len(runtime.directory.usable(min_pow_bits=runtime.paths.min_pow_bits))}"
+            )
+
+            url = f"https://{ids.parse_hostname(target)}{ids.SUFFIX}" if target else "about:blank"
+            if launch:
+                if profile.launch(url) is None:
+                    typer.secho(
+                        "⚠  Firefox no encontrado. Ábrelo a mano con:\n"
+                        f"   firefox -profile {profile.directory} -no-remote {url}",
+                        fg=typer.colors.YELLOW,
+                    )
+                else:
+                    typer.echo(f"→ abriendo {url}")
+            else:
+                typer.echo(f"→ sin navegador. URL: {url}")
+
+            runtime.spawn(runtime.keep_learning())
+            typer.echo("\n  Ctrl-C para parar")
             while True:
                 await asyncio.sleep(30)
                 typer.echo(f"  [socks {proxy.stats}]")
         finally:
-            await proxy.close()
-            await manager.close()
+            await runtime.close()
 
     try:
         asyncio.run(run())

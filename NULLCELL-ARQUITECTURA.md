@@ -334,6 +334,15 @@ dirección: ver §3) guarda dos tipos de registro firmado:
   > guards en prefijos distintos entre sí, y **antigüedad observada mínima de 10 minutos** antes de
   > enrutar por un relevo. La consecuencia honesta de lo último es que **un nodo recién instalado
   > no puede construir un circuito durante 10 minutos**, y el mensaje de error lo dice así.
+  >
+  > **⚠ Fallo corregido en M6, y merece quedar escrito.** La antigüedad se tomaba del campo `ts`
+  > del descriptor, que es **lo que el publicador afirma**. Un atacante publicaba una avalancha de
+  > identidades nuevas con fecha retrasada unas horas y pasaba el suelo de 10 minutos al instante:
+  > la mitigación entera vaciada por una línea. §7 dice antigüedad **observada**, y ahora lo es:
+  > `RelayDirectory` registra la primera vez que **este nodo** vio cada relevo, la republicación
+  > refresca claves y endpoints **sin reiniciar el reloj**, y hay un test que lo afirma.
+  >
+  > La lección general: cuando una regla dice "observado", el dato no puede venir del observado.
 - **PoW** (argon2id) en el descriptor + antigüedad mínima observada → encarece inundar la red de
   relays falsos.
 - **Verificación cruzada:** se consulta el mismo descriptor a varios nodos de buckets distintos
@@ -404,6 +413,20 @@ circuito, sin excepciones.
 - Siempre funciona `<nid>.null` (autocertificado, no se puede robar).
 - `panaderia.null`: registro *first-come* en el DHT bajo `sha256("name:panaderia")`, con PoW y
   renovación obligatoria; si caduca, se libera. Alias personales en `~/.nullcell/hosts`.
+
+> **Construido en M6** (`services/`). Tres piezas que faltaban y que son las que convierten esto
+> en una red que se usa sola:
+>
+> | Pieza | Qué resuelve |
+> |---|---|
+> | `services/descriptor.py` | el descriptor de portal de §8, con los metadatos que lee el buscador. Todo el texto viene acotado al parsear: es entrada de un atacante que acaba en un índice y en una pantalla |
+> | `services/publisher.py` | publica y **renueva antes de que caduque el TTL**. No es mantenimiento: §9 construye todo su modelo de vivacidad sobre ello, así que un portal que deja de republicar es un portal que se ha ido |
+> | `services/resolver.py` | nombre o dirección → tres puntos de enlace. Alias locales primero, nombres reservados nunca salen a la red (§9), y **nada se confía al DHT**: un nombre da una clave, y el descriptor se verifica contra *esa* clave. Una celda mentirosa puede negarse a responder —lo cual se ve— pero no puede responder mal |
+>
+> Y `PathBuilder` es ahora **el único sitio que elige saltos**. Esa centralización es deliberada:
+> las propiedades de §7 lo son de *todos* los circuitos o de ninguno, y la forma en que
+> silenciosamente pasan a ser de ninguno es dos rutas de código, una de las cuales construye un
+> camino a mano.
 
 ### Acceso del usuario: ¿cómo se navega?
 
