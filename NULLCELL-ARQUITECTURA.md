@@ -1006,8 +1006,8 @@ techo del transporte**, que sí mide nuestro código.
 | **M1** | eficiencia del enlace sobre el techo crudo de QUIC | **≥ 85 %** · *medido: 91,8 %* | ídem, contra `bench_raw_ceiling` |
 | **M1** | asignaciones por marco en la ruta caliente | **< 1 byte** · *medido: 0,04* | `tracemalloc` en estado estable |
 | **M2** | búsqueda remota en malla de 30 celdas, loopback sin circuitos | **≤ 100 ms** · *medido: 7 ms de mediana* | `tests/integration/test_dht.py` |
-| **M3** | construcción de circuito de 3 saltos, red local | **≤ 150 ms** | `bench/circuit_build.py` en `nullcell-lab` |
-| **M3** | throughput por circuito, 3 saltos locales | **≥ 5 MB/s** | ídem |
+| **M3** | construcción de circuito de 3 saltos, red local | **≤ 150 ms** · *medido: 3,9 ms* | `bench/circuit_build.py` |
+| **M3** | eficiencia de la capa onion: 3 saltos vs (1 salto ÷ 3) | **≥ 80 %** · *medido: 99 %* | ídem |
 | **M3** | marcos/s reenviados por un relevo, 1 núcleo | **≥ 60.000** | `bench/relay_forward.py` |
 | **M4** | establecimiento de rendezvous (6 saltos) | **≤ 2 s** en laboratorio | `bench/rendezvous.py` |
 | **M5** | carga completa de una página con 20 recursos | **≤ 3 s** en laboratorio | Firefox con el perfil + `performance.timing` |
@@ -1148,6 +1148,39 @@ un vector. Lo que se hace:
   mintiendo no lo puedan mover.
 - Si el desvío estimado supera **1 h**, el HUD lo avisa: a partir de ahí los fallos de validación
   parecen fallos de red y son un infierno de depurar.
+
+### Hallazgos de M3 — la capa onion no es el coste
+
+| Lo que decía el plan | Lo que mide el banco |
+|---|---|
+| Construcción de circuito de 3 saltos ≤ 150 ms | **3,9 ms de mediana.** Dos handshakes Noise NK relevados más uno directo; sobra margen de 38× |
+| Throughput por circuito ≥ 5 MB/s | **3,1 MB/s**, y el objetivo estaba mal planteado — ver abajo |
+
+**El objetivo absoluto de throughput medía el banco, no el diseño. Otra vez.** En el laboratorio,
+un marco de 3 saltos cruza **tres enlaces QUIC dentro del mismo proceso y el mismo bucle de
+eventos**, así que el techo es el de un enlace partido por tres. Reformulado como lo que de verdad
+se quería saber —*¿cuánto cuesta la capa onion?*— midiendo 1 salto contra 3:
+
+| | marcos/s | MB/s |
+|---|---|---|
+| 1 salto | 18.611 | 9,5 |
+| 3 saltos | 6.121 | 3,1 |
+| ideal de 3 saltos en 1 núcleo (1 salto ÷ 3) | — | 3,2 |
+| **eficiencia de la capa onion** | | **99 %** |
+
+**Las tres capas de ChaCha20 y los digests acumulados son esencialmente gratis.** Encaja con el
+hallazgo de M1: el techo lo pone `aioquic`, y todo lo que escribimos encima queda muy por debajo de
+él. En la red real cada relevo es una máquina distinta, así que el throughput de un circuito lo
+limitará el enlace más lento (~21 MB/s), no la suma de tres en un núcleo.
+
+**La lección, que ya es la segunda vez:** un objetivo absoluto de rendimiento sobre una topología
+simulada en un proceso mide la simulación. Las puertas de rendimiento de este proyecto se expresan
+**relativas a un techo medido**, no en cifras absolutas.
+
+Por el camino, escribir §5 destapó dos asignaciones por marco en mi propia ruta caliente: el digest
+se calculaba sobre una **copia de 507 bytes** con el campo a cero, y el tag se escribía con otra
+copia. Las dos eliminadas —el digest se alimenta en tres trozos de un `memoryview`, el tag se
+escribe en sitio— que es literalmente la regla de la táctica 2 aplicada a quien la escribió.
 
 ### Hallazgos de M1 — lo que cambió al medir
 

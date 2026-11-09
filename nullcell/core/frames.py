@@ -37,6 +37,8 @@ from typing import Final
 
 __all__ = [
     "CIRC_ID_RESPONDER_BIT",
+    "DIGEST_OFFSET",
+    "DIGEST_SIZE",
     "FRAME_SIZE",
     "HEADER_SIZE",
     "PAYLOAD_SIZE",
@@ -53,6 +55,8 @@ __all__ = [
     "pack_relay_payload",
     "parse_header",
     "parse_relay_payload",
+    "set_digest",
+    "zero_digest",
 ]
 
 FRAME_SIZE: Final[int] = 512
@@ -60,6 +64,11 @@ HEADER_SIZE: Final[int] = 5  # circ_id u32 + cmd u8
 PAYLOAD_SIZE: Final[int] = FRAME_SIZE - HEADER_SIZE  # 507
 RELAY_HEADER_SIZE: Final[int] = 11
 RELAY_DATA_SIZE: Final[int] = PAYLOAD_SIZE - RELAY_HEADER_SIZE  # 496
+
+#: Byte offset of the ``digest`` field inside a RELAY payload, after
+#: ``rcmd`` (1) + ``recognized`` (2) + ``stream_id`` (2).
+DIGEST_OFFSET: Final[int] = 5
+DIGEST_SIZE: Final[int] = 4
 
 #: §5 — the circuit id is local to a link, not global to the network. The side
 #: that *initiated* the QUIC link allocates ids with the top bit clear, the side
@@ -186,6 +195,31 @@ def parse_relay_payload(payload: bytes | bytearray | memoryview) -> RelayHeader:
         raise FrameError(f"relay length field says {length}, max {RELAY_DATA_SIZE}")
     view = memoryview(payload)[RELAY_HEADER_SIZE:]
     return RelayHeader(rcmd, recognized, stream_id, digest, length, view)
+
+
+def zero_digest(payload: bytes | bytearray) -> bytes:
+    """Copy of *payload* with the digest field cleared.
+
+    The running digest (§5) is computed over the payload as it will look with
+    the field zeroed, because the field is where the result goes. Both ends do
+    the same thing, so both get the same bytes.
+    """
+    out = bytearray(payload)
+    out[DIGEST_OFFSET : DIGEST_OFFSET + DIGEST_SIZE] = bytes(DIGEST_SIZE)
+    return bytes(out)
+
+
+def set_digest(payload: bytes | bytearray, tag: bytes) -> bytes:
+    """Copy of *payload* with the digest field set to *tag*."""
+    if len(tag) != DIGEST_SIZE:
+        raise FrameError(f"digest tag must be {DIGEST_SIZE} bytes, got {len(tag)}")
+    out = bytearray(payload)
+    out[DIGEST_OFFSET : DIGEST_OFFSET + DIGEST_SIZE] = tag
+    return bytes(out)
+
+
+def get_digest(payload: bytes | bytearray | memoryview) -> bytes:
+    return bytes(payload[DIGEST_OFFSET : DIGEST_OFFSET + DIGEST_SIZE])
 
 
 def iter_frames(buffer: bytes | bytearray | memoryview):

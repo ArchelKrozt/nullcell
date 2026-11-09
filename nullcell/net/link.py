@@ -50,6 +50,11 @@ class FrameProtocol(QuicConnectionProtocol):
         self._inbox = bytearray()
         self._out = FrameBuffer(DEFAULT_BATCH)
         self.on_frame: FrameHandler | None = None
+        #: Per-circuit handlers. One link carries frames from many circuits
+        #: multiplexed (§4), so inbound frames are routed by ``circ_id``: 0 is
+        #: link-level traffic (VERSIONS, PING, and in M2 the DHT), anything
+        #: else belongs to a circuit.
+        self._routes: dict[int, FrameHandler] = {}
         self.handshake_done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self.closed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self.peer_versions: tuple[int, ...] = ()
@@ -61,6 +66,18 @@ class FrameProtocol(QuicConnectionProtocol):
     @property
     def is_client(self) -> bool:
         return bool(self._quic.configuration.is_client)
+
+    # ------------------------------------------------------------------ routing
+    def route(self, circ_id: int, handler: FrameHandler) -> None:
+        """Send frames with this ``circ_id`` to *handler*."""
+        self._routes[circ_id] = handler
+
+    def unroute(self, circ_id: int) -> None:
+        self._routes.pop(circ_id, None)
+
+    @property
+    def circuits(self) -> list[int]:
+        return [c for c in self._routes if c != 0]
 
     # ----------------------------------------------------------- lifecycle
     def quic_event_received(self, event: QuicEvent) -> None:
@@ -170,7 +187,7 @@ class FrameProtocol(QuicConnectionProtocol):
             # measure RTT per hop (§9 reads this as the circuit RTT).
             self.send_frame(circ_id, Cmd.PONG, bytes(payload[:8]))
             return
-        handler = self.on_frame
+        handler = self._routes.get(circ_id) or self.on_frame
         if handler is not None:
             result = handler(circ_id, cmd, payload)
             if result is not None:

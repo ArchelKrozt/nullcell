@@ -68,7 +68,12 @@ class StreamMux:
         self._inbox: dict[int, bytearray] = {}
         self._handler: MessageHandler | None = None
         self._tasks: set[asyncio.Task] = set()
-        link.on_frame = self._on_frame
+        link.route(circ_id, self._on_frame)
+
+    @property
+    def link(self) -> FrameProtocol:
+        """The link this mux runs on. A relay needs it to carry circuits (§5)."""
+        return self._link
 
     # ------------------------------------------------------------------ setup
     def set_handler(self, handler: MessageHandler) -> None:
@@ -172,3 +177,4 @@ class StreamMux:
         self._inbox.clear()
         for task in list(self._tasks):
             task.cancel()
+        self._link.unroute(self._circ_id)
