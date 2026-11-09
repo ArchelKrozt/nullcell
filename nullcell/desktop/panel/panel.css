@@ -94,3 +94,33 @@ code { color: var(--accent-data); }
 @media (prefers-reduced-motion: reduce) {
   .switch, .switch .knob { transition: none; }
 }
+
+/* --------------------------------------------------- estado de la red (§7) */
+.net { padding: 9px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.phase { margin: 0; color: var(--text-dim); font-size: 11px; }
+.meter { height: 3px; margin-top: 7px; background: var(--border); border-radius: 2px;
+         overflow: hidden; }
+.meter .fill { display: block; height: 100%; width: 0; background: var(--accent-data);
+               transition: width 300ms ease; }
+.hint { margin: 7px 0 0; font-size: 10.5px; color: var(--text-dim); }
+.hint strong { color: var(--text); font-weight: 600; }
+.seedbox { display: flex; gap: 6px; margin-top: 8px; }
+.seedbox input {
+  flex: 1; min-width: 0; padding: 5px 7px; font-family: inherit; font-size: 10.5px;
+  color: var(--text); background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.seedbox input:focus { outline: none; border-color: var(--accent-data); }
+
+/* ------------------------------------------------------------- el portal */
+.portal { margin-top: 9px; padding: 8px; background: var(--surface); border-radius: var(--radius); }
+.pill {
+  display: inline-block; padding: 1px 7px; font-size: 9.5px; letter-spacing: .08em;
+  text-transform: uppercase; border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text-dim);
+}
+.pill.live { color: var(--ok); border-color: var(--ok); }
+.portal-folder { display: block; margin-top: 5px; font-size: 10.5px; color: var(--text-dim);
+                 word-break: break-all; }
+.portal-links { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.portal-links a { color: var(--accent-data); font-size: 10.5px; }

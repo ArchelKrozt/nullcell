@@ -106,12 +106,28 @@ class SiteHost:
     def __init__(self, app: web.Application) -> None:
         self.app = app
         self._server: web.Server | None = None
+        self._runner: web.AppRunner | None = None
         self.stats = {"streams": 0, "bytes_in": 0}
 
     async def start(self) -> None:
         runner = web.AppRunner(self.app, access_log=None)
         await runner.setup()
+        self._runner = runner
         self._server = runner.server
+
+    async def close(self) -> None:
+        """Release the application and stop serving.
+
+        `ncell host` never needed this: it serves one folder until Ctrl-C and
+        the process ends. The desktop can retire a portal and publish another
+        one in the same process, and without a shutdown each publish left a
+        live `AppRunner` behind — a leak that only shows up in the one place
+        the command line could not reach.
+        """
+        if self._runner is not None:
+            await self._runner.cleanup()
+            self._runner = None
+        self._server = None
 
     def serve(self, stream: Stream) -> None:
         """Attach a new stream to the HTTP server. Use as ``on_stream``."""

@@ -147,6 +147,12 @@ class NodeThread:
         # found, by a log that came out empty.
         log.info("panel en %s", self.url, extra={"public": True})
 
+        # Las intenciones guardadas vuelven, y el nodo las persigue solo: con
+        # una red joven nada de esto puede cumplirse al arrancar, y obligar a
+        # la persona a volver a pulsar el botón cuando aparezcan relevos es
+        # pedirle que vigile lo que el programa puede vigilar.
+        await panel.restore()
+        runtime.spawn(panel.run_forever())
         runtime.spawn(pex.run_periodically(runtime.node))
         runtime.spawn(runtime.keep_learning())
         runtime.spawn(runtime.keep_portals_fresh())

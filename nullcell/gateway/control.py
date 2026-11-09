@@ -1,36 +1,43 @@
 """The actions the panel can take — §9, the control half.
 
-Until now the HUD only *read*: `/api/state` and a search box. Everything that
-changed the node was a command-line flag decided before it started, which is
-why sharing bandwidth meant stopping the process and starting it again with
-`--relay`.
+Until M9 the HUD only *read*. Everything that changed the node was a flag
+decided before it started, which is why sharing bandwidth meant stopping the
+process and starting it again.
 
-This module is the small, explicit set of things the panel may do, and it is
-deliberately small. It is reached over loopback by a page in a browser, so
-every action here is one a hostile page would love to call: publishing a folder
-of yours, or turning this cell into a public relay in your name.
+**Everything here works by intent, not by command.** "Publish this folder" is
+not an instruction to publish right now; it is a standing wish that the node
+makes true as soon as it can, and keeps true afterwards. That is not a
+convenience: a fresh cell on a young network *cannot* build a circuit — §7
+needs three relays at three operators, each observed for ten minutes — so a
+panel whose buttons only work once the network is healthy is a panel that does
+nothing on the day you install it. Declaring the intent and reconciling later
+turns a dead button into a plan.
 
-Three rules, each one load-bearing:
+The state machine, for a portal:
 
-1. **A state-changing action needs the token in the request *header*.** Reading
-   accepts the token from a cookie, because that is how a normal page keeps a
-   session. A cross-site form can make the browser attach that cookie, but it
-   cannot set a header, so mutations ask for what only our own script can
-   provide. `SameSite=Strict` already blocks the cookie cross-site, and the
-   `Host` check already blocks DNS rebinding; this is the third fence, and the
-   one that does not depend on the browser honouring an attribute.
-2. **Every action is declared here as a named capability.** The panel cannot
-   reach into the runtime, it can only call something on this list.
-3. **Nothing here is silent.** Each action returns what actually happened,
-   including when the answer is "less than you asked for" — turning a relay off
-   does not retract a descriptor that is already published, and the panel says
-   so rather than showing a tick.
+    (nada) ─publish_folder()─► local ──relays appear──► en línea
+                                 │                         │
+                                 └── se ve en loopback,  se ve desde la red,
+                                     nadie más lo ve      con descriptor y
+                                                          puntos de enlace
+
+The local step is not a simulation. It is the same `aiohttp` application the
+real portal serves, on loopback, so the work of making a site is useful before
+there is anyone to show it to — and the panel says plainly which of the two
+states it is in, because telling someone they are published when nobody can
+reach them is the one thing this must never do.
+
+Security, for the routes that reach this: see `localui._guard`. A state-changing
+request needs the token in a **header**, which a cross-site form cannot set.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import json
 import logging
-from collections.abc import Awaitable, Callable
+import time
 from pathlib import Path
 from typing import Any, Final
 
@@ -41,7 +48,10 @@ log = logging.getLogger(__name__)
 #: Methods that change something and therefore need the header token.
 MUTATING: Final[frozenset[str]] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-Action = Callable[..., Awaitable[dict[str, Any]]]
+#: How often the node tries to make the declared intents true.
+RECONCILE_EVERY: Final[float] = 20.0
+
+Action = Any
 
 
 class ControlError(Exception):
@@ -49,19 +59,66 @@ class ControlError(Exception):
 
 
 class ControlPanel:
-    """The actions a running cell exposes to its own panel.
-
-    Built from a :class:`~nullcell.cli.runtime.Runtime`, but it holds only the
-    callables it needs, so the panel never gets a handle on the runtime itself.
-    """
+    """What a running cell lets its own panel do, and remember."""
 
     def __init__(self, runtime: Any, *, home: Path | None = None) -> None:
         self.runtime = runtime
-        self.home = home or getattr(runtime, "home", Path.home() / ".nullcell")
-        #: Set while a relay descriptor is being renewed.
+        self.home = Path(home) if home else Path.home() / ".nullcell"
+        self.state_path = self.home / "desktop.json"
+
         self._relay_task: Any = None
         self._relay_endpoints: list[str] = []
-        self._portals: dict[str, dict[str, Any]] = {}
+        #: The operator asked to share, whether or not it has taken effect.
+        self.wants_sharing = False
+
+        #: The portal, as intent plus whatever has been achieved so far.
+        self.portal: dict[str, Any] | None = None
+        self._site: Any = None
+        self._preview: Any = None
+        self._service: Any = None
+        self._portal_task: Any = None
+        self._last_error: str | None = None
+
+    # -------------------------------------------------------------- memoria
+    def remember(self) -> None:
+        """Persist the intents, so a restart resumes instead of forgetting.
+
+        Only the *wishes* are stored, never anything derived: descriptors,
+        intro points and circuit state are rebuilt from the network, and
+        writing them down would mean restoring a view of the network that was
+        true once.
+        """
+        wish = {
+            "sharing": self.wants_sharing,
+            "portal": (
+                {k: self.portal[k] for k in ("folder", "name") if self.portal.get(k)}
+                if self.portal
+                else None
+            ),
+        }
+        try:
+            self.home.mkdir(parents=True, exist_ok=True)
+            self.state_path.write_text(json.dumps(wish, indent=2), encoding="utf-8")
+        except OSError as exc:
+            log.warning("no se pudo guardar %s: %s", self.state_path, exc)
+
+    async def restore(self) -> None:
+        """Pick the intents back up. Never fatal: a bad file is not a reason
+        to refuse to start, it is a reason to start empty and say so."""
+        try:
+            wish = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as exc:
+            log.warning("%s ilegible, se empieza en limpio: %s", self.state_path, exc)
+            return
+
+        if wish.get("sharing"):
+            self.wants_sharing = True
+        portal = wish.get("portal")
+        if isinstance(portal, dict) and portal.get("folder"):
+            with contextlib.suppress(ControlError):
+                await self.publish_folder(portal["folder"], name=portal.get("name"), save=False)
 
     # ------------------------------------------------------------ bandwidth
     @property
@@ -72,79 +129,246 @@ class ControlPanel:
         """Turn bandwidth sharing on or off (§10: opt-in, always).
 
         Honest about the asymmetry: switching **on** takes effect once the
-        descriptor is stored, but switching **off** only stops *announcing*.
-        A descriptor already in the DHT stays there until its TTL runs out, and
-        circuits already open are drained, not cut. The panel reports both.
+        descriptor is stored, but switching **off** only stops *announcing*. A
+        descriptor already in the DHT stays until its TTL runs out, and open
+        circuits are drained, not cut.
         """
-        if on:
-            if self.sharing:
-                return {"sharing": True, "changed": False, "detail": "ya estaba compartiendo"}
-            targets = endpoints or self._reachable_endpoints()
-            if not targets:
-                raise ControlError(
-                    "esta celda no sabe por dónde es alcanzable, así que no puede "
-                    "ofrecerse como relevo: hace falta --announce con tu IP o nombre público"
-                )
-            stored = await self.runtime.publisher.publish_relay(targets)
-            self._relay_endpoints = list(targets)
-            self._relay_task = self.runtime.spawn(
-                self.runtime.publisher.renew_forever(endpoints=targets)
-            )
-            log.info("sharing bandwidth, descriptor stored on %d cells", stored)
-            return {
-                "sharing": True,
-                "changed": True,
-                "stored_on": stored,
-                "endpoints": list(targets),
-                "detail": f"descriptor publicado en {stored} celdas",
-            }
+        self.wants_sharing = on
+        self.remember()
 
-        if not self.sharing:
-            return {"sharing": False, "changed": False, "detail": "no estaba compartiendo"}
-        self._relay_task.cancel()
-        self._relay_task = None
-        ttl = getattr(self.runtime.publisher, "ttl", None)
-        detail = "se deja de anunciar"
-        if ttl:
-            detail += f"; el descriptor ya publicado caduca en ~{int(ttl) // 60} min"
-        detail += ". Los circuitos abiertos se vacían, no se cortan"
-        return {"sharing": False, "changed": True, "detail": detail}
+        if not on:
+            if not self.sharing:
+                return {"sharing": False, "changed": False, "detail": "no estaba compartiendo"}
+            self._relay_task.cancel()
+            self._relay_task = None
+            ttl = getattr(self.runtime.publisher, "ttl", None)
+            detail = "se deja de anunciar"
+            if ttl:
+                detail += f"; el descriptor ya publicado caduca en ~{int(ttl) // 60} min"
+            detail += ". Los circuitos abiertos se vacían, no se cortan"
+            return {"sharing": False, "changed": True, "detail": detail}
+
+        if self.sharing:
+            return {"sharing": True, "changed": False, "detail": "ya estaba compartiendo"}
+
+        targets = endpoints or self._reachable_endpoints()
+        if not targets:
+            raise ControlError(
+                "esta celda no sabe por dónde es alcanzable, así que no puede ofrecerse "
+                "como relevo. Arráncala con --announce y tu IP o nombre público"
+            )
+        stored = await self.runtime.publisher.publish_relay(targets)
+        self._relay_endpoints = list(targets)
+        self._relay_task = self.runtime.spawn(
+            self.runtime.publisher.renew_forever(endpoints=targets)
+        )
+        detail = f"descriptor publicado en {stored} celdas"
+        if stored == 0:
+            detail = (
+                "nadie a quien anunciarlo todavía: esta celda no conoce otras. "
+                "Se reintenta solo en cuanto aparezca alguna"
+            )
+        return {"sharing": True, "changed": True, "stored_on": stored, "detail": detail}
 
     def _reachable_endpoints(self) -> list[str]:
-        """Where this cell says it can be reached, if anywhere."""
         return [e for e in getattr(self.runtime.node, "endpoints", []) if e]
 
-    # --------------------------------------------------------------- portals
+    # --------------------------------------------------------------- semilla
+    async def add_seed(self, line: str) -> dict[str, Any]:
+        """Join through somebody else's cell (§7: a seed is an introduction).
+
+        The single most useful thing a lone node can be told, which is why it
+        is a first-class action instead of a start-up flag.
+        """
+        from nullcell.cli.relay import _parse_seed
+
+        line = (line or "").strip()
+        node = _parse_seed(line)
+        if node is None:
+            raise ControlError(
+                "eso no parece una semilla. El formato es <dirección>@host:puerto, "
+                "tal cual lo imprime `ncell relay --print-seed`"
+            )
+        known = await self.runtime.node.bootstrap([line])
+        learned = await self.runtime.learn_relays()
+        return {
+            "peers": known,
+            "relays": learned,
+            "detail": (
+                f"{known} celdas conocidas, {learned} relevos observados"
+                if known
+                else "no contestó: ¿está encendida esa celda y abierto su puerto UDP?"
+            ),
+        }
+
+    def seed_line(self) -> str | None:
+        """Our own introduction, to give to somebody else."""
+        endpoints = self._reachable_endpoints()
+        if not endpoints:
+            return None
+        from nullcell.cli.relay import seed_line
+
+        return seed_line(self.runtime.identity, endpoints[0])
+
+    # --------------------------------------------------------------- portales
     async def publish_folder(
-        self, folder: str | Path, *, name: str | None = None
+        self, folder: str | Path, *, name: str | None = None, save: bool = True
     ) -> dict[str, Any]:
-        """Serve a folder as a portal, without opening a port (§8)."""
-        root = Path(folder).expanduser()
+        """Serve a folder as a portal, now locally and on the network when able."""
+        root = Path(folder).expanduser().resolve()
         if not root.is_dir():
             raise ControlError(f"{root} no es una carpeta")
         if not any(root.iterdir()):
             raise ControlError(f"{root} está vacía: no hay nada que publicar")
-        index = root / "index.html"
-        warning = None if index.is_file() else "la carpeta no tiene index.html"
 
-        if not self.runtime.paths.ready:
-            raise ControlError(self.runtime.paths.why_not_ready())
-
-        return {
+        await self.unpublish(save=False)
+        self.portal = {
             "folder": str(root),
+            "name": name or None,
             "address": self.runtime.identity.hostname,
-            "name": name,
-            "warning": warning,
+            "state": "local",
+            "warning": (
+                None if (root / "index.html").is_file() else "la carpeta no tiene index.html"
+            ),
+            "since": time.time(),
         }
+        await self._start_local(root)
+        if save:
+            self.remember()
+        await self.reconcile()
+        return self.portal
 
-    # ----------------------------------------------------------------- state
+    async def _start_local(self, root: Path) -> None:
+        """The same application the portal serves, on loopback.
+
+        Not a mock-up: identical code path, so what you see locally is what the
+        network will serve.
+        """
+        from aiohttp import web
+
+        from nullcell.host.site import static_app
+
+        application = static_app(root)
+        runner = web.AppRunner(application, access_log=None)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]  # noqa: SLF001
+        self._preview = runner
+        self.portal["preview"] = f"http://127.0.0.1:{port}/"
+
+    async def unpublish(self, *, save: bool = True) -> dict[str, Any]:
+        """Stop serving. Honest about the descriptor it cannot retract."""
+        had = self.portal is not None
+        state = (self.portal or {}).get("state")
+        if self._portal_task is not None:
+            self._portal_task.cancel()
+            self._portal_task = None
+        if self._preview is not None:
+            await self._preview.cleanup()
+            self._preview = None
+        if self._site is not None:
+            with contextlib.suppress(Exception):
+                await self._site.close()
+            self._site = None
+        self._service = None
+        self.portal = None
+        if save:
+            self.remember()
+
+        detail = "no había ningún portal" if not had else "portal retirado"
+        if state == "en línea":
+            ttl = getattr(self.runtime.publisher, "ttl", None)
+            if ttl:
+                detail += f"; el descriptor caduca en ~{int(ttl) // 60} min"
+        return {"portal": None, "detail": detail}
+
+    # ------------------------------------------------------------ reconciliar
+    async def reconcile(self) -> None:
+        """Make the declared intents true, as far as the network allows today.
+
+        Called on a timer, so the operator never has to come back and press
+        the button again once relays appear. Failures are recorded and
+        retried, not raised: this runs unattended.
+        """
+        try:
+            if self.wants_sharing and not self.sharing and self._reachable_endpoints():
+                await self.set_sharing(True)
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            log.debug("no se pudo activar el relevo todavía: %s", exc)
+
+        if self.portal is None or self.portal["state"] == "en línea":
+            return
+        if not self.runtime.paths.ready:
+            return
+        try:
+            await self._go_live()
+            self._last_error = None
+        except Exception as exc:  # noqa: BLE001
+            self._last_error = str(exc)
+            log.info("el portal sigue local: %s", exc)
+
+    async def _go_live(self) -> None:
+        """Establish intro points and publish the descriptor (§6, §8)."""
+        from nullcell.host.site import SiteHost, static_app
+        from nullcell.onion.rendezvous_msgs import INTRO_POINTS
+        from nullcell.onion.service import HiddenService
+        from nullcell.services.descriptor import ServiceDescriptor
+
+        root = Path(self.portal["folder"])
+        service = HiddenService(self.runtime.identity, self.runtime.circuits, multiplexed=True)
+        site = SiteHost(static_app(root))
+        await site.start()
+        # Per *session*, not per service: every rendezvous gets its own
+        # multiplexed session and the streams arrive on it, so hanging the
+        # handler off the service would serve only whoever connected first.
+        service.on_session = lambda session: setattr(session, "on_stream", site.serve)
+
+        paths = [self.runtime.paths.build() for _ in range(INTRO_POINTS)]
+        established = await service.establish(paths)
+        if not established:
+            await site.close()
+            raise ControlError("ningún punto de enlace se estableció todavía")
+
+        descriptor = ServiceDescriptor(
+            pub=self.runtime.identity.public_key,
+            x25519=service.x25519_public,
+            intro_points=service.intro_points,
+            name=self.portal.get("name") or "",
+        )
+        stored = await self.runtime.publisher.publish_service(descriptor)
+        self._site, self._service = site, service
+        self._portal_task = self.runtime.spawn(
+            self.runtime.publisher.renew_forever(
+                descriptor=descriptor, name=self.portal.get("name")
+            )
+        )
+        self.portal.update({"state": "en línea", "intro_points": established, "stored_on": stored})
+        if self.portal.get("name"):
+            taken = await self.runtime.publisher.publish_name(self.portal["name"])
+            self.portal["name_registered"] = bool(taken)
+        log.info("portal en línea: %s", self.portal["address"])
+
+    async def run_forever(self) -> None:
+        while True:
+            await asyncio.sleep(RECONCILE_EVERY)
+            with contextlib.suppress(Exception):
+                await self.reconcile()
+
+    # ----------------------------------------------------------------- estado
     def describe(self) -> dict[str, Any]:
-        """What the switches should show, so the panel never guesses."""
+        """Everything the panel needs, including what is missing and for how long."""
+        missing = self.runtime.paths.missing()
         return {
             "sharing": self.sharing,
-            "endpoints": self._relay_endpoints or self._reachable_endpoints(),
+            "wants_sharing": self.wants_sharing,
             "can_share": bool(self._reachable_endpoints()),
+            "endpoints": self._relay_endpoints or self._reachable_endpoints(),
+            "seed": self.seed_line(),
             "paths_ready": bool(self.runtime.paths.ready),
-            "why_not_ready": self.runtime.paths.why_not_ready(),
-            "portals": list(self._portals.values()),
+            "why_not_ready": missing["why"],
+            "network": missing,
+            "portal": self.portal,
+            "last_error": self._last_error,
         }

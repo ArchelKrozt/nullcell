@@ -12,7 +12,20 @@
   <span class="dot" id="dot" aria-hidden="true"></span>
 </header>
 
-<p class="phase" id="phase">arrancando…</p>
+<!-- El estado de la red: lo primero, porque decide qué se puede hacer. -->
+<section class="net" id="net">
+  <p class="phase" id="phase">arrancando…</p>
+  <div class="meter" id="meter" hidden>
+    <span class="fill" id="fill"></span>
+  </div>
+  <p class="hint" id="hint" hidden></p>
+  <div class="seedbox" id="seedbox" hidden>
+    <input id="seed-input" type="text" spellcheck="false"
+           placeholder="pega aquí una semilla: dirección@host:puerto">
+    <button class="action" id="seed-add">Entrar</button>
+  </div>
+  <p class="note" id="seed-note" hidden></p>
+</section>
 
 <section class="block">
   <div class="row">
@@ -21,31 +34,38 @@
       <small id="share-help">Presta tu conexión para que otros construyan circuitos. Opt-in, y
         tu nodo <em>no puede leer</em> lo que reenvía.</small>
     </div>
-    <button class="switch" id="share" role="switch" aria-checked="false" aria-labelledby="share-help">
-      <span class="knob"></span>
-    </button>
+    <button class="switch" id="share" role="switch" aria-checked="false"
+            aria-labelledby="share-help"><span class="knob"></span></button>
   </div>
   <p class="note" id="share-note" hidden></p>
+  <button class="link" id="copy-seed" hidden>Copiar mi semilla, para que otros entren</button>
 </section>
 
 <section class="block">
   <div class="row">
     <div class="label">
       <strong>Publicar una carpeta</strong>
-      <small>Sirve una carpeta como portal <code>.null</code>. No abre ningún puerto y no necesitas
-        dominio ni certificado.</small>
+      <small>Sirve una carpeta como portal <code>.null</code>. No abre puertos ni necesita dominio.</small>
     </div>
     <button class="action" id="publish">Elegir…</button>
   </div>
-  <p class="note" id="publish-note" hidden></p>
+  <div class="portal" id="portal" hidden>
+    <span class="pill" id="portal-state">local</span>
+    <span class="portal-folder" id="portal-folder"></span>
+    <div class="portal-links">
+      <a id="portal-preview" href="#" target="_blank">ver en local</a>
+      <button class="link" id="unpublish">retirar</button>
+    </div>
+    <p class="note" id="portal-note" hidden></p>
+  </div>
 </section>
 
 <section class="block">
   <div class="row">
     <div class="label">
       <strong>Navegador</strong>
-      <small>Abre el navegador de la red, con el buscador y el panel. Núcleo Chromium, perfil
-        aislado, sin autoridad de certificación.</small>
+      <small>El navegador de la red, con el buscador. Núcleo Chromium, sin autoridad de
+        certificación.</small>
     </div>
     <button class="action primary" id="browse">Abrir</button>
   </div>

@@ -7,6 +7,8 @@ switch that turns this cell into a public relay in your name cannot.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -16,11 +18,26 @@ from nullcell.gateway.localui import TOKEN_HEADER, LocalUI
 
 
 class FakePaths:
-    def __init__(self, ready: bool = True) -> None:
+    def __init__(self, ready: bool = True, *, ready_in: float | None = None) -> None:
         self.ready = ready
+        self.ready_in = ready_in
 
     def why_not_ready(self) -> str:
         return "" if self.ready else "hacen falta 3 relevos usables (§7)"
+
+    def missing(self) -> dict:
+        return {
+            "known": 3 if self.ready else 0,
+            "usable": 3 if self.ready else 0,
+            "needed": 3,
+            "operators": 3 if self.ready else 0,
+            "waiting": 0,
+            "ready_in": 0.0 if self.ready else self.ready_in,
+            "why": self.why_not_ready(),
+        }
+
+    def build(self, **kwargs):
+        return ["hop1", "hop2", "hop3"]
 
 
 class FakePublisher:
@@ -46,7 +63,9 @@ class FakeNode:
 
 
 class FakeIdentity:
+    nid = "a" * 56
     hostname = "a" * 56 + ".null"
+    public_key = b"\x01" * 32
 
 
 class FakeRuntime:
@@ -66,9 +85,9 @@ class FakeRuntime:
 
 
 def panel(**kwargs) -> ControlPanel:
-    import pathlib
+    import tempfile
 
-    return ControlPanel(FakeRuntime(**kwargs), home=pathlib.Path("/tmp/nullcell-test"))
+    return ControlPanel(FakeRuntime(**kwargs), home=pathlib.Path(tempfile.mkdtemp()))
 
 
 # ------------------------------------------------------------ §10: compartir
@@ -134,10 +153,74 @@ async def test_a_folder_without_an_index_is_published_with_a_warning(tmp_path):
     assert result["address"].endswith(".null")
 
 
-async def test_publishing_without_routes_says_what_is_missing(tmp_path):
+async def test_publishing_without_routes_still_serves_it_locally(tmp_path):
+    """The behaviour this replaced: publishing used to be refused outright
+    until the network was healthy, which meant that on the day you install
+    Nullcell the button did nothing.
+
+    §7 genuinely cannot build a circuit from one node, and pretending
+    otherwise would be the one unforgivable lie here. So the portal is served
+    on loopback and **labelled as local** — the same aiohttp application the
+    real portal serves, so the work is useful before there is anybody to show
+    it to, and it goes live by itself later.
+    """
     (tmp_path / "index.html").write_text("<h1>hola</h1>")
-    with pytest.raises(ControlError, match="3 relevos"):
-        await panel(ready=False).publish_folder(tmp_path)
+    p = panel(ready=False)
+    result = await p.publish_folder(tmp_path)
+
+    assert result["state"] == "local"
+    assert result["preview"].startswith("http://127.0.0.1:")
+    assert result["address"].endswith(".null")
+    await p.unpublish()
+
+
+async def test_a_local_portal_really_serves_the_folder(tmp_path):
+    """Not a mock-up: the preview must actually answer, or it is a label."""
+    import aiohttp
+
+    (tmp_path / "index.html").write_text("<h1>pan</h1>")
+    p = panel(ready=False)
+    result = await p.publish_folder(tmp_path)
+    try:
+        async with aiohttp.ClientSession() as http, http.get(result["preview"]) as response:
+            assert response.status == 200
+            assert "pan" in await response.text()
+    finally:
+        await p.unpublish()
+
+
+async def test_the_intent_survives_a_restart(tmp_path):
+    """A desktop that forgets what you asked for is the command line with
+    extra steps."""
+    folder = tmp_path / "sitio"
+    folder.mkdir()
+    (folder / "index.html").write_text("<h1>hola</h1>")
+    home = tmp_path / "home"
+
+    first = ControlPanel(FakeRuntime(endpoints=["203.0.113.9:4433"], ready=False), home=home)
+    await first.publish_folder(folder)
+    await first.set_sharing(True)
+    await first.unpublish(save=False)  # cierra el servidor, no olvida la intención
+
+    second = ControlPanel(FakeRuntime(endpoints=["203.0.113.9:4433"], ready=False), home=home)
+    await second.restore()
+    try:
+        assert second.wants_sharing is True
+        assert second.portal is not None
+        assert second.portal["folder"] == str(folder)
+    finally:
+        await second.unpublish()
+
+
+async def test_a_corrupt_state_file_starts_empty_instead_of_failing(tmp_path):
+    """Refusing to start because a preferences file is broken punishes the
+    operator for something the program did."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "desktop.json").write_text("{esto no es json")
+    p = ControlPanel(FakeRuntime(endpoints=["203.0.113.9:4433"]), home=home)
+    await p.restore()
+    assert p.portal is None and p.wants_sharing is False
 
 
 # ------------------------------------------------- §9: quién puede accionar

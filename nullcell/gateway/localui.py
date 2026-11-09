@@ -346,6 +346,24 @@ class LocalUI:
         )
         return web.json_response(result)
 
+    async def _add_seed(self, request: web.Request) -> web.StreamResponse:
+        panel = self._panel()
+        body = await _json_body(request)
+        line = body.get("seed")
+        if not isinstance(line, str) or not line.strip():
+            return web.json_response({"error": "falta 'seed'"}, status=400)
+        try:
+            result = await panel.add_seed(line)
+        except control_mod.ControlError as refused:
+            return web.json_response({"error": str(refused)}, status=409)
+        self.bus.emit("control.seed", result.get("detail", "semilla añadida"))
+        return web.json_response(result)
+
+    async def _unpublish(self, request: web.Request) -> web.StreamResponse:
+        result = await self._panel().unpublish()
+        self.bus.emit("control.portal", result.get("detail", "portal retirado"))
+        return web.json_response(result)
+
     async def _publish_folder(self, request: web.Request) -> web.StreamResponse:
         panel = self._panel()
         body = await _json_body(request)
@@ -375,6 +393,8 @@ class LocalUI:
                 web.get("/api/control", self._control_state),
                 web.post("/api/control/sharing", self._set_sharing),
                 web.post("/api/control/portal", self._publish_folder),
+                web.delete("/api/control/portal", self._unpublish),
+                web.post("/api/control/seed", self._add_seed),
             ]
         )
         return app

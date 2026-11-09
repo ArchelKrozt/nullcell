@@ -175,8 +175,24 @@ Aparece un icono **NULL** en la barra de menús. Al pulsarlo se abre un panel co
 - **publicar una carpeta** como portal `.null`, con un selector nativo y sin abrir puertos;
 - el **navegador** de la red, con el buscador y el panel.
 
-Cerrar una ventana no mata el nodo: los interruptores son estado de un proceso vivo en lugar de
-flags que hay que recordar entre arranques.
+Cerrar una ventana no mata el nodo, y las decisiones se guardan: al volver a abrirlo, lo que
+pediste sigue pedido.
+
+### Con un solo nodo, que es como empieza todo
+
+§7 no puede construir un circuito con una sola celda —hacen falta 3 relevos de operadores
+distintos, observados 10 minutos— y fingir lo contrario sería la única mentira imperdonable aquí.
+Así que el panel **funciona por intención**: declaras lo que quieres y el nodo lo cumple en cuanto
+puede.
+
+- **Publicar una carpeta funciona desde el primer minuto.** Se sirve en tu máquina, etiquetada
+  `sólo local`, con la *misma* aplicación que servirá el portal real —no es una maqueta— y pasa a
+  `en línea` sola en cuanto haya relevos.
+- **El panel dice qué falta y si toca esperar o actuar**, que son reacciones opuestas: un relevo
+  joven se arregla esperando y hay cuenta atrás; una red con un solo operador no se arregla
+  esperando nunca, y entonces lo que hace falta es una semilla. Hay una casilla para pegar la de
+  otro y un botón para copiar la tuya.
+- **El navegador sí se queda apagado** hasta que haya circuitos, porque ahí no hay media tinta.
 
 **El navegador no necesita autoridad de certificación.** La CA de §8 existe para que un navegador
 ajeno acepte `https://…null`; el nuestro registra el esquema `null://` y entrega los bytes del

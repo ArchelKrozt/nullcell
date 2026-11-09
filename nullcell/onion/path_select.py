@@ -492,6 +492,47 @@ class PathBuilder:
     def ready(self) -> bool:
         return len(self.directory.usable(min_pow_bits=self.min_pow_bits)) >= CIRCUIT_LENGTH
 
+    def missing(self, *, now: float | None = None) -> dict:
+        """What stands between this cell and its first circuit.
+
+        An interface that can only say "not ready" leaves the operator
+        guessing whether to wait or to act, and those are opposite responses.
+        The two answers are genuinely different: a relay that is merely *young*
+        becomes usable by waiting, while a network with one operator in it
+        never will, however long you stare at it.
+        """
+        now = time.time() if now is None else now
+        known = self.directory.candidates(now=now)
+        usable = self.directory.usable(min_pow_bits=self.min_pow_bits, now=now)
+        waiting = sorted(
+            MIN_OBSERVED_AGE - c.observed_for(now)
+            for c in known
+            if c.pow_bits >= self.min_pow_bits
+            and c.prefixes
+            and c.observed_for(now) < MIN_OBSERVED_AGE
+        )
+
+        # Enough *operators*, not enough relays: §7 counts distinct prefixes,
+        # so five relays behind one provider are one hop, not five.
+        prefixes = {p for c in known if c.pow_bits >= self.min_pow_bits for p in c.prefixes}
+
+        ready_in: float | None = None
+        still_needed = CIRCUIT_LENGTH - len(usable)
+        if still_needed <= 0:
+            ready_in = 0.0
+        elif len(waiting) >= still_needed:
+            ready_in = waiting[still_needed - 1]
+
+        return {
+            "known": len(known),
+            "usable": len(usable),
+            "needed": CIRCUIT_LENGTH,
+            "operators": len(prefixes),
+            "waiting": len(waiting),
+            "ready_in": ready_in,
+            "why": self.why_not_ready(),
+        }
+
     def why_not_ready(self) -> str:
         """A message that says what is missing, not just that something is."""
         total = len(self.directory)
