@@ -1,0 +1,47 @@
+# Un relevo público, listo para un servidor.
+#
+#   1. cambia ANNOUNCE por tu IP o nombre público y el puerto
+#   2. docker compose up -d
+#   3. docker compose logs | grep "seed line"   <- la línea que das a otros
+#
+# Si eres el primer relevo de una red, deja SEEDS vacío: el relevo dirá que
+# está solo, que es lo correcto, e imprimirá su línea de semilla.
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: nullcell:latest
+    restart: unless-stopped
+    # El puerto del host y el de --announce deben coincidir: lo que anuncias es
+    # lo que otros intentarán alcanzar.
+    ports:
+      - "4433:4433/udp"
+    volumes:
+      - nullcell-state:/var/lib/nullcell
+    environment:
+      ANNOUNCE: "cambiame.example.com:4433"
+      SEEDS: ""
+      MAX_MBPS: "0"
+      LOG_LEVEL: "info"
+    command: >
+      relay
+      --announce ${ANNOUNCE:-cambiame.example.com:4433}
+      --host ::
+      --port 4433
+      --max-mbps ${MAX_MBPS:-0}
+      --log-level ${LOG_LEVEL:-info}
+    # Más que el --drain-timeout del relevo, o Docker lo mata a mitad del
+    # vaciado y los circuitos vivos se caen de golpe (§10).
+    stop_grace_period: 45s
+    # Un relevo no necesita privilegios ni escribir en su propio sistema de
+    # ficheros: sólo en su volumen de estado.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  nullcell-state:

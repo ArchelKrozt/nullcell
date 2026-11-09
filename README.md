@@ -59,16 +59,92 @@ Antes que nada, porque definen el proyecto:
   público puede traer reclamos al operador. El relevo es **opt-in explícito** y el proyecto no
   incluye herramientas de evasión de detección.
 
+## Por dónde empieza todo
+
+| Quieres… | Fichero / comando |
+|---|---|
+| **entender el proyecto** | [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md) — el documento del que todo lo demás sale. Las referencias `§N` del código apuntan ahí |
+| **instalarlo** | [`deploy/install.sh`](deploy/install.sh) |
+| **levantar un relevo** (lo que hace que exista una red) | `ncell relay --announce TU_IP:4433` |
+| **el punto de entrada del programa** | [`nullcell/cli/main.py`](nullcell/cli/main.py) → `app`, declarado en `pyproject.toml` como el binario `ncell` |
+| **el relevo en sí** | [`nullcell/cli/relay.py`](nullcell/cli/relay.py) |
+| **cómo se ensambla una celda** | [`nullcell/cli/runtime.py`](nullcell/cli/runtime.py) |
+| **operar un relevo en serio** | [`docs/RELAY_OP.md`](docs/RELAY_OP.md) |
+| **el formato de cable** | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) |
+
 ## Instalación
+
+### Rápida
+
+```bash
+git clone https://github.com/ArchelKrozt/nullcell
+cd nullcell
+./deploy/install.sh
+```
+
+### A mano
 
 ```bash
 python3 -m venv ~/.venvs/nullcell          # fuera de carpetas sincronizadas
-~/.venvs/nullcell/bin/pip install -e ".[dev]"
+~/.venvs/nullcell/bin/pip install ".[dev]"
+~/.venvs/nullcell/bin/ncell --version
 ```
 
-> Si mueves o renombras la carpeta del proyecto, **reinstala**: una instalación editable graba la
-> ruta absoluta en el entorno virtual y `ncell` deja de funcionar hasta que corras
-> `pip install -e .` desde la ruta nueva.
+> Con `pip install -e` (editable), si mueves o renombras la carpeta hay que **reinstalar**: la
+> instalación editable graba la ruta absoluta en el entorno virtual.
+
+## Levantar la primera red
+
+Una red de Nullcell **son relevos**. Sin ellos no hay nada, y por eso el primer paso de cualquier
+despliegue es levantar uno.
+
+```bash
+# 1. el primer relevo de la red: no tiene semillas, y eso es correcto
+ncell relay --announce TU_IP_PUBLICA:4433
+
+# 2. te imprime la línea que das a los demás
+ncell relay --announce TU_IP_PUBLICA:4433 --print-seed
+# jkssaepy2lvvfvds3paf3l42qgkxubxmsgw3tubcbmar56p7anzbcsyb@TU_IP:4433
+
+# 3. el segundo operador arranca así
+ncell relay --announce SU_IP:4433 --seed LA_LINEA_DE_ARRIBA
+```
+
+Una semilla **no es un secreto ni una credencial**: §7 dice que es una *presentación*, nada más.
+No firma nada, no avala nada, y todo registro aprendido a través de ella se verifica por separado.
+Publícala donde quieras.
+
+Necesitas **un puerto UDP abierto** (QUIC va sobre UDP) y una IP alcanzable. No necesitas root, ni
+dominio, ni certificado. Todo lo demás está en [`docs/RELAY_OP.md`](docs/RELAY_OP.md), incluida la
+parte legal.
+
+### Como servicio
+
+```bash
+./deploy/install.sh --relay TU_IP:4433     # systemd, usuario sin privilegios
+journalctl -u nullcell-relay -f
+```
+
+`systemctl stop` envía `SIGTERM`, que **vacía** los circuitos vivos antes de salir en lugar de
+tirarlos de golpe (§10).
+
+### Con Docker
+
+```bash
+cd deploy
+ANNOUNCE=tu.ip:4433 docker compose up -d
+docker compose logs | grep "seed line"
+```
+
+> **Sin construir:** el `Dockerfile` y los `compose` están escritos y validados sintácticamente,
+> pero en esta máquina no hay Docker, así que **nadie ha ejecutado `docker build`**. Si lo haces y
+> falla, es un fallo real y conviene saberlo.
+
+### Laboratorio
+
+```bash
+docker compose -f deploy/docker-compose.lab.yml up --build   # 5 relevos que se encuentran solos
+```
 
 > **No pongas `~/.nullcell/` en iCloud, Dropbox ni OneDrive.** Sincronizar `identity.key` saca tu
 > clave privada de la máquina y sincronizar las bases SQLite las corrompe. `ncell` avisa si lo
@@ -87,7 +163,9 @@ ncell publish panaderia --announce IP:4433 --seed <nid>@host:puerto  # registra 
 ncell resolve panaderia.null --seed <nid>@host:puerto                # busca en el DHT
 ncell node --hud                                                     # con panel local
 
+ncell relay --announce TU_IP:4433                                     # prestar ancho de banda
 ncell host ./mi-sitio --name panaderia --title "La Panadería"         # publicar un portal
+ncell host app.py --wsgi app:application                              # o una app WSGI
 ncell browse panaderia.null                                          # abrir el navegador
 ncell resolve panaderia.null                                         # ver sus puntos de enlace
 ```
@@ -138,7 +216,13 @@ NULLCELL_HOME=/tmp/b ncell ping <NID-de-a> --addr 127.0.0.1:4455
 | Gossip de observaciones firmadas con Bloom filters (§8, §9) | ✅ |
 | Crawler educado sobre circuitos, `robots.txt` obligatorio (§8) | ✅ |
 | HUD completo: portales con sellos, topología, buscador (§9) | ✅ |
-| Relleno `PADDING` (§5) | ❌ — la mitigación de §10 contra análisis de tráfico no existe aún |
+| Relleno `PADDING`: las dos máquinas de §5 | ✅ |
+| `ncell relay`: apagado elegante, límites, línea de semilla (§1, §10) | ✅ |
+| Despliegue: Docker, systemd, instalador, `docs/RELAY_OP.md` (§12) | ✅ sin construir la imagen |
+| Proxy HTTP en `:9151`, sólo `CONNECT` (§8) | ✅ |
+| TUI (§13, M8) | ❌ |
+| Listas de bloqueo firmadas y suscribibles (§10) | ❌ |
+| Modo TUN y navegador embebido (§13, M8, opcionales) | ❌ |
 | Diversidad por ASN (§7) | ❌ — ver §7, el motivo está documentado |
 | L2b rendezvous, intro points (§6) | ❌ M4 |
 | SOCKS5, CA local, `ncell browse`, `ncell host` (§8) | ❌ M5 |

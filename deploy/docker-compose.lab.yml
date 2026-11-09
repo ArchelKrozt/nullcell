@@ -1,0 +1,46 @@
+# nullcell-lab — la red de pruebas de §13, en contenedores.
+#
+#   docker compose -f docker-compose.lab.yml up --build
+#
+# Cinco relevos que se encuentran solos: el primero arranca sin semillas y los
+# demás usan la suya. Es el mismo escenario que la prueba de 30 celdas, pero
+# atravesando pila de red de verdad en lugar de loopback dentro de un proceso.
+x-relay: &relay
+  image: nullcell:latest
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  stop_grace_period: 20s
+  environment:
+    PYTHONUNBUFFERED: "1"
+
+services:
+  seed:
+    <<: *relay
+    hostname: seed
+    command: ["relay", "--announce", "seed:4433", "--host", "::", "--port", "4433"]
+
+  cell1: &cell
+    <<: *relay
+    depends_on: [seed]
+    # Cada celda descubre la semilla por la baliza de LAN (§7), así que no hace
+    # falta inyectar su NID a mano: en una red de laboratorio están en el mismo
+    # segmento.
+    command: ["relay", "--announce", "cell1:4433", "--host", "::", "--port", "4433", "--lan"]
+    hostname: cell1
+
+  cell2:
+    <<: *cell
+    hostname: cell2
+    command: ["relay", "--announce", "cell2:4433", "--host", "::", "--port", "4433", "--lan"]
+
+  cell3:
+    <<: *cell
+    hostname: cell3
+    command: ["relay", "--announce", "cell3:4433", "--host", "::", "--port", "4433", "--lan"]
+
+  cell4:
+    <<: *cell
+    hostname: cell4
+    command: ["relay", "--announce", "cell4:4433", "--host", "::", "--port", "4433", "--lan"]

@@ -103,7 +103,7 @@ class RelayService:
         self.on_relay_message: Callable[[CircuitLeg, RelayHeader], None] | None = None
         self.legs: dict[tuple[int, int], CircuitLeg] = {}
         self.draining = False
-        self.stats = {"created": 0, "extended": 0, "forwarded": 0, "refused": 0}
+        self.stats = {"created": 0, "extended": 0, "forwarded": 0, "refused": 0, "padding": 0}
 
     # ------------------------------------------------------------------ wiring
     def attach(self, link: FrameProtocol) -> None:
@@ -134,6 +134,12 @@ class RelayService:
             return  # unknown circuit; silently dropped, as Tor does
         if cmd == Cmd.DESTROY:
             self._destroy(key, "DESTROY received")
+            return
+        if cmd == Cmd.PADDING:
+            # §5: padding is link-local. It is indistinguishable from any other
+            # frame on the wire — 512 bytes like everything else — and it stops
+            # here rather than travelling down the circuit.
+            self.stats["padding"] = self.stats.get("padding", 0) + 1
             return
         if cmd == Cmd.RELAY:
             self._on_relay(key, leg, link, bytes(payload))

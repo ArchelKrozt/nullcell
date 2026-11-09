@@ -1,0 +1,59 @@
+# Un relevo de Nullcell como servicio de systemd.
+#
+#   sudo cp nullcell-relay.service /etc/systemd/system/
+#   sudo systemctl edit nullcell-relay     # pon tu --announce
+#   sudo systemctl enable --now nullcell-relay
+#   journalctl -u nullcell-relay -f
+#
+# La línea de semilla que das a otros:
+#   journalctl -u nullcell-relay | grep "seed line"
+
+[Unit]
+Description=Nullcell relay (red P2P cifrada y anónima)
+Documentation=https://github.com/ArchelKrozt/nullcell
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nullcell
+Group=nullcell
+StateDirectory=nullcell
+Environment=NULLCELL_HOME=/var/lib/nullcell
+Environment=PYTHONUNBUFFERED=1
+
+# Cambia el --announce por tu IP o nombre público. Lo que anuncias es lo que
+# otros intentarán alcanzar, así que tiene que ser accesible desde fuera.
+ExecStart=/opt/nullcell/bin/ncell relay --announce CAMBIAME:4433 --host :: --port 4433
+
+# SIGTERM vacía los circuitos vivos antes de salir (§10). Dale más margen que
+# el --drain-timeout del relevo, o systemd lo mata a mitad del vaciado.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=10s
+
+# Un relevo no necesita root para nada (§0, decisión 3), así que no lo tiene.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Un relevo con la red saturada no debe tumbar la máquina.
+MemoryMax=1G
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

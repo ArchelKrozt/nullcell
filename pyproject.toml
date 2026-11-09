@@ -9,6 +9,7 @@ description = "Red P2P cifrada y anónima — circuitos onion sobre QUIC"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = [
     "aioquic>=1.7",          # QUIC: net/
     "PyNaCl>=1.5",           # Ed25519, X25519, argon2id, ed25519 curve ops

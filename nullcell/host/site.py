@@ -140,6 +140,89 @@ class SiteHost:
             transport.close()
 
 
+def wsgi_app(target: str) -> web.Application:
+    """Wrap a WSGI callable so ``ncell host --wsgi app:application`` works (§8).
+
+    §8 promises Flask and FastAPI, and both speak WSGI or ASGI. This takes the
+    ``module:attribute`` form and serves it over circuits like anything else.
+
+    The callable runs in a **thread executor**, because WSGI is synchronous by
+    definition: calling it inline would block the event loop for the whole
+    request and, per §16, freeze every circuit on the node.
+    """
+    import asyncio
+    import importlib
+    import io
+
+    module_name, _, attribute = target.partition(":")
+    if not module_name or not attribute:
+        raise ValueError("expected module:attribute, as in app:application")
+    module = importlib.import_module(module_name)
+    application = getattr(module, attribute)
+
+    app = web.Application()
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        body = await request.read()
+        environ = {
+            "REQUEST_METHOD": request.method,
+            "SCRIPT_NAME": "",
+            "PATH_INFO": request.path,
+            "QUERY_STRING": request.query_string,
+            "CONTENT_TYPE": request.headers.get("Content-Type", ""),
+            "CONTENT_LENGTH": str(len(body)),
+            # A circuit has no client address, which is the point (§6). An
+            # application that logs REMOTE_ADDR gets a name, not a lie.
+            "REMOTE_ADDR": "nullcell",
+            "SERVER_NAME": request.host.split(":")[0],
+            "SERVER_PORT": "443",
+            "SERVER_PROTOCOL": "HTTP/1.1",
+            "wsgi.version": (1, 0),
+            "wsgi.url_scheme": "https",
+            "wsgi.input": io.BytesIO(body),
+            "wsgi.errors": io.StringIO(),
+            "wsgi.multithread": True,
+            "wsgi.multiprocess": False,
+            "wsgi.run_once": False,
+        }
+        for key, value in request.headers.items():
+            environ["HTTP_" + key.upper().replace("-", "_")] = value
+
+        captured: dict[str, object] = {}
+
+        def start_response(status, headers, exc_info=None):
+            captured["status"] = status
+            captured["headers"] = headers
+            return lambda data: None
+
+        def call() -> bytes:
+            chunks = application(environ, start_response)
+            try:
+                return b"".join(chunks)
+            finally:
+                close = getattr(chunks, "close", None)
+                if close is not None:
+                    close()
+
+        loop = asyncio.get_running_loop()
+        payload = await loop.run_in_executor(None, call)
+
+        status = str(captured.get("status", "200 OK"))
+        response = web.Response(
+            body=payload,
+            status=int(status.split()[0]),
+            headers={
+                key: value
+                for key, value in captured.get("headers", [])  # type: ignore[union-attr]
+                if key.lower() not in ("content-length", "transfer-encoding")
+            },
+        )
+        return response
+
+    app.router.add_route("*", "/{tail:.*}", handler)
+    return app
+
+
 def static_app(root: Path, *, index: str = "index.html") -> web.Application:
     """An application serving *root* as a static site (§8, ``ncell host``)."""
     root = root.resolve()

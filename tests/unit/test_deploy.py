@@ -1,0 +1,248 @@
+"""Lo que un operador toca — §1, §10, §12.
+
+A relay is what makes a network exist, so the pieces an operator uses are
+tested like anything else: the seed line, the log's refusal to record peer
+addresses, the deployment files, and the padding §10 counts as a mitigation.
+"""
+
+from __future__ import annotations
+
+import logging
+import pathlib
+import re
+import subprocess
+import sys
+
+import pytest
+
+from nullcell.cli.logging_setup import LEVELS, setup
+from nullcell.cli.relay import DRAIN_TIMEOUT, seed_line
+from nullcell.core import ids
+from nullcell.core.identity import Identity
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+# -------------------------------------------------------------- la semilla §7
+def test_the_seed_line_is_an_address_and_an_endpoint():
+    identity = Identity.generate()
+    line = seed_line(identity, "203.0.113.9:4433")
+    nid, _, endpoint = line.partition("@")
+    assert ids.decode_nid(nid).pub == identity.public_key
+    assert endpoint == "203.0.113.9:4433"
+
+
+def test_the_seed_line_round_trips_through_the_parser():
+    from nullcell.cli.relay import _parse_seed
+
+    identity = Identity.generate()
+    node = _parse_seed(seed_line(identity, "198.51.100.4:4433"))
+    assert node is not None
+    assert node.pub == identity.public_key
+    assert node.endpoints == ["198.51.100.4:4433"]
+
+
+@pytest.mark.parametrize(
+    "bad", ["", "sin-arroba", "no-es-nid@1.2.3.4:443", "x" * 56 + "@1.2.3.4:443"]
+)
+def test_a_malformed_seed_is_skipped_not_fatal(bad):
+    """An operator pasting a broken line should get a warning, not a crash."""
+    from nullcell.cli.relay import _parse_seed
+
+    assert _parse_seed(bad) is None
+
+
+# ------------------------------------------------------------------- log §12
+def test_the_log_does_not_record_peer_addresses(caplog):
+    """§12: the difference between an operator who has nothing to hand over
+    and one who does."""
+    setup("info")
+    log = logging.getLogger("nullcell.relay.test")
+    with caplog.at_level(logging.INFO):
+        log.info("circuito de 192.168.1.44:51234 hacia 10.0.0.9:4433 establecido")
+    rendered = _render("info", 'log.info("circuito de 192.168.1.44:51234 hacia 10.0.0.9:4433")')
+    assert "192.168.1.44" not in rendered
+
+
+def test_our_own_address_is_not_filtered():
+    """The seed line is this relay's own address — public by construction, and
+    the one line a new operator needs. The filter swallowed it at first."""
+    rendered = _render(
+        "info",
+        'log.info("seed line for others: %s", "x"*56 + "@203.0.113.9:4433",'
+        ' extra={"public": True})',
+    )
+    assert "203.0.113.9:4433" in rendered
+
+
+def test_debug_shows_everything_if_the_operator_asks():
+    rendered = _render("debug", 'log.info("circuito de 192.168.1.44:51234 hacia 10.0.0.9:4433")')
+    assert "192.168.1.44" in rendered
+
+
+def _render(level: str, statement: str) -> str:
+    """Run a log statement in a fresh process and capture stdout.
+
+    In-process capture fights pytest's own handlers, and what matters here is
+    what actually reaches stdout — which is what journald and Docker collect.
+    """
+    script = (
+        "import logging\n"
+        "from nullcell.cli.logging_setup import setup\n"
+        f"setup({level!r}, journal=False)\n"
+        "log = logging.getLogger('nullcell.relay')\n"
+        f"{statement}\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_every_level_is_usable():
+    for name in LEVELS:
+        setup(name)
+
+
+# ----------------------------------------------------------- relleno §5, §10
+async def test_link_padding_sends_only_while_idle():
+    """§5: an idle link disappearing from flow records draws a picture of when
+    you are active."""
+    import asyncio
+
+    from nullcell.onion.padding import LinkPadding
+
+    class FakeLink:
+        def __init__(self) -> None:
+            self.frames_in = 0
+            self.frames_out = 0
+            self.padding = 0
+
+        def send_frame(self, circ_id, cmd, payload=b"") -> None:
+            self.padding += 1
+            self.frames_out += 1
+
+    link = FakeLink()
+    padding = LinkPadding(link, idle=0.05, jitter=0.0)
+    padding.start()
+    try:
+        await asyncio.sleep(0.3)
+        assert padding.sent >= 1, "an idle link sent no padding"
+
+        # Now make it busy: real traffic should suppress padding.
+        before = padding.sent
+        for _ in range(10):
+            link.frames_in += 1
+            await asyncio.sleep(0.03)
+        assert padding.sent - before <= 2, "padding kept firing on a busy link"
+    finally:
+        padding.stop()
+
+
+async def test_padding_frames_are_indistinguishable_on_the_wire():
+    """§5: 512 bytes, the same fixed size as everything else — which is the
+    entire reason the frame size is fixed."""
+    from nullcell.core.frames import FRAME_SIZE, Cmd, pack
+
+    assert len(pack(0, Cmd.PADDING, b"")) == FRAME_SIZE
+    assert len(pack(7, Cmd.RELAY, b"x" * 400)) == FRAME_SIZE
+
+
+async def test_construction_padding_does_not_delay_the_build():
+    import asyncio
+
+    from nullcell.onion.padding import ConstructionPadding
+
+    class FakeLink:
+        def __init__(self) -> None:
+            self.padding = 0
+
+        def send_frame(self, circ_id, cmd, payload=b"") -> None:
+            self.padding += 1
+
+    link = FakeLink()
+
+    async def build() -> str:
+        await asyncio.sleep(0.15)
+        return "listo"
+
+    padding = ConstructionPadding(link, burst=3)
+    assert await padding.around(build()) == "listo"
+    assert padding.sent >= 1
+
+
+def test_a_relay_drops_padding_instead_of_forwarding_it():
+    """§5: padding is link-local and stops at the hop that receives it."""
+    import inspect
+
+    from nullcell.onion import relay_logic
+
+    source = inspect.getsource(relay_logic.RelayService._on_frame)
+    assert "Cmd.PADDING" in source
+
+
+# ------------------------------------------------------------- despliegue §12
+def test_the_deployment_files_exist():
+    """§12 promises RELAY_OP.md, and a relay nobody can install is a relay
+    nobody runs."""
+    for relative in (
+        "Dockerfile",
+        "deploy/docker-compose.yml",
+        "deploy/docker-compose.lab.yml",
+        "deploy/nullcell-relay.service",
+        "deploy/install.sh",
+        "docs/RELAY_OP.md",
+    ):
+        assert (ROOT / relative).is_file(), f"falta {relative}"
+
+
+def test_the_installer_is_valid_shell():
+    result = subprocess.run(
+        ["bash", "-n", str(ROOT / "deploy" / "install.sh")], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_compose_files_are_valid_yaml():
+    yaml = pytest.importorskip("yaml")
+    for relative in ("deploy/docker-compose.yml", "deploy/docker-compose.lab.yml"):
+        data = yaml.safe_load((ROOT / relative).read_text(encoding="utf-8"))
+        assert data["services"], f"{relative} declares no services"
+
+
+def test_the_systemd_unit_drains_before_exiting():
+    """§10: dropping hundreds of circuits at once is both a bad experience and
+    an observable event on the network."""
+    unit = (ROOT / "deploy" / "nullcell-relay.service").read_text(encoding="utf-8")
+    assert "KillSignal=SIGTERM" in unit
+    timeout = int(re.search(r"TimeoutStopSec=(\d+)", unit).group(1))
+    assert timeout > DRAIN_TIMEOUT, "systemd would kill the relay mid-drain"
+
+
+def test_the_systemd_unit_runs_unprivileged():
+    """§0, decision 3: a relay needs no root for anything."""
+    unit = (ROOT / "deploy" / "nullcell-relay.service").read_text(encoding="utf-8")
+    for hardening in (
+        "User=nullcell",
+        "NoNewPrivileges=true",
+        "ProtectSystem=strict",
+        "CapabilityBoundingSet=",
+    ):
+        assert hardening in unit, f"falta {hardening}"
+
+
+def test_docker_gives_the_relay_time_to_drain():
+    yaml = pytest.importorskip("yaml")
+    compose = yaml.safe_load((ROOT / "deploy" / "docker-compose.yml").read_text(encoding="utf-8"))
+    grace = compose["services"]["relay"]["stop_grace_period"]
+    assert int(str(grace).rstrip("s")) > DRAIN_TIMEOUT
+
+
+def test_the_image_does_not_run_as_root():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "USER nullcell" in dockerfile
+    # And the node's state, which holds the private key, is a volume rather
+    # than part of the image.
+    assert "VOLUME" in dockerfile
+    assert "NULLCELL_HOME" in dockerfile

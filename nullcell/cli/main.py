@@ -19,8 +19,32 @@ from nullcell.net.link import PROTOCOL_VERSIONS
 app = typer.Typer(
     add_completion=False,
     help="Nullcell — red P2P cifrada y anónima. Binario: ncell (no nc, que es netcat).",
-    no_args_is_help=True,
 )
+
+
+def _version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("nullcell")
+    except PackageNotFoundError:  # pragma: no cover - running from a checkout
+        return "desconocida (no instalado)"
+
+
+@app.callback(invoke_without_command=True)
+def _main(
+    ctx: typer.Context,
+    version: Annotated[bool, typer.Option("--version", help="Muestra la versión y sale.")] = False,
+) -> None:
+    """Nullcell. Las referencias §N apuntan a NULLCELL-ARQUITECTURA.md."""
+    if version:
+        typer.echo(f"nullcell {_version()}")
+        raise typer.Exit(0)
+    if ctx.invoked_subcommand is None:
+        # `invoke_without_command` is what lets --version run at all, so the
+        # no-arguments case has to print the help itself.
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
 
 
 def _load_identity(passphrase: str | None = None) -> tuple[Identity, config.Config]:
@@ -416,18 +440,30 @@ def cmd_host(
     index: Annotated[
         bool, typer.Option("--index/--no-index", help="Indexar en el buscador")
     ] = True,
+    wsgi: Annotated[
+        str | None, typer.Option("--wsgi", help="app:application en lugar de una carpeta")
+    ] = None,
 ) -> None:
-    """Publica una carpeta como portal, sin abrir ningún puerto (§8)."""
+    """Publica una carpeta o una app WSGI como portal, sin abrir puertos (§8)."""
     identity, cfg = _load_identity()
     root = Path(directory).expanduser().resolve()
-    if not root.is_dir():
+    if wsgi is None and not root.is_dir():
         typer.secho(f"✗ {root} no es una carpeta", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 
-    from nullcell.host.site import SiteHost, static_app
+    from nullcell.host.site import SiteHost, static_app, wsgi_app
     from nullcell.onion.rendezvous_msgs import INTRO_POINTS
     from nullcell.onion.service import HiddenService
     from nullcell.services.descriptor import ServiceDescriptor
+
+    if wsgi is not None:
+        try:
+            application = wsgi_app(wsgi)
+        except (ValueError, ImportError, AttributeError) as exc:
+            typer.secho(f"✗ --wsgi {wsgi}: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
+    else:
+        application = static_app(root)
 
     async def run() -> None:
         runtime = await _runtime(
@@ -436,7 +472,7 @@ def cmd_host(
         try:
             _require_paths(runtime)
             service = HiddenService(identity, runtime.circuits, multiplexed=True)
-            site = SiteHost(static_app(root))
+            site = SiteHost(application)
             await site.start()
             service.on_session = lambda session: setattr(session, "on_stream", site.serve)
 
@@ -463,7 +499,7 @@ def cmd_host(
             stored = await runtime.publisher.publish_service(descriptor, private=private)
 
             typer.secho(f"✓ portal publicado: {identity.hostname}", fg=typer.colors.GREEN)
-            typer.echo(f"  carpeta:          {root}")
+            typer.echo(f"  sirviendo:        {wsgi if wsgi else root}")
             typer.echo(f"  puntos de enlace: {established}/{INTRO_POINTS}")
             typer.echo(f"  descriptor en:    {stored} celdas")
             typer.echo(f"  clase:            {'privado (§6)' if private else 'portal público'}")
@@ -502,6 +538,9 @@ def cmd_browse(
     target: Annotated[str | None, typer.Argument(help="Nombre o dirección .null")] = None,
     seed: Annotated[list[str] | None, typer.Option("--seed")] = None,
     socks_port: Annotated[int, typer.Option("--socks-port")] = 9150,
+    http_port: Annotated[
+        int, typer.Option("--http-port", help="proxy HTTP para clientes sin SOCKS; 0 lo desactiva")
+    ] = 9151,
     launch: Annotated[bool, typer.Option("--launch/--no-launch")] = True,
 ) -> None:
     """Levanta el proxy y abre un navegador con perfil aislado (§8)."""
@@ -546,6 +585,13 @@ def cmd_browse(
             port = await proxy.start()
             typer.secho(f"✓ SOCKS5 en 127.0.0.1:{port}", fg=typer.colors.GREEN)
             typer.echo("  resolución de nombres remota obligatoria (§8)")
+
+            http = None
+            if http_port:
+                from nullcell.gateway.http_proxy import HttpProxy
+
+                http = HttpProxy(open_session, ca, port=http_port)
+                typer.echo(f"✓ proxy HTTP en 127.0.0.1:{await http.start()} (sólo CONNECT, §8)")
             typer.echo(
                 f"  guards fijados: {len(runtime.guards)} · relevos usables: "
                 f"{len(runtime.directory.usable(min_pow_bits=runtime.paths.min_pow_bits))}"
@@ -570,9 +616,67 @@ def cmd_browse(
                 await asyncio.sleep(30)
                 typer.echo(f"  [socks {proxy.stats}]")
         finally:
+            if http is not None:
+                await http.close()
+            await proxy.close()
             await runtime.close()
 
     try:
         asyncio.run(run())
     except KeyboardInterrupt:
         typer.echo("\nparado")
+
+
+# ------------------------------------------------- M8: operar un relevo (§1, §10)
+@app.command("relay")
+def cmd_relay(
+    announce: Annotated[
+        str, typer.Option("--announce", "-a", help="host:puerto público de esta celda")
+    ],
+    port: Annotated[int, typer.Option("--port", "-p")] = 4433,
+    host: Annotated[str, typer.Option("--host")] = "::",
+    seed: Annotated[list[str] | None, typer.Option("--seed", help="<nid>@host:puerto")] = None,
+    max_mbps: Annotated[int, typer.Option("--max-mbps", help="0 = sin límite declarado")] = 0,
+    max_circuits: Annotated[
+        int, typer.Option("--max-circuits", help="tope de circuitos simultáneos")
+    ] = 512,
+    drain_timeout: Annotated[float, typer.Option("--drain-timeout")] = 30.0,
+    lan: Annotated[bool, typer.Option("--lan", help="baliza multicast en la LAN")] = False,
+    log_level: Annotated[str, typer.Option("--log-level")] = "info",
+    print_seed: Annotated[
+        bool, typer.Option("--print-seed", help="imprime la línea de bootstrap y sale")
+    ] = False,
+) -> None:
+    """Presta ancho de banda a la red. El comando para un servidor (§1, §10).
+
+    Opt-in y acotado: un relevo no puede leer lo que reenvía, así que sólo
+    puede negarse por volumen. `systemctl stop` o `docker stop` envían SIGTERM,
+    que vacía los circuitos vivos antes de salir en lugar de tirarlos de golpe.
+    """
+    from nullcell.cli.logging_setup import setup as setup_logging
+    from nullcell.cli.relay import RelayRunner, seed_line
+
+    setup_logging(log_level)
+    identity, cfg = _load_identity()
+
+    if print_seed:
+        typer.echo(seed_line(identity, announce))
+        raise typer.Exit(0)
+
+    if warning := config.cloud_synced_warning():
+        typer.secho(f"⚠  {warning}", fg=typer.colors.YELLOW, err=True)
+
+    runner = RelayRunner(
+        host=host,
+        port=port,
+        announce=announce,
+        seeds=seed,
+        max_mbps=max_mbps,
+        max_circuits=max_circuits,
+        drain_timeout=drain_timeout,
+        lan=lan,
+    )
+    try:
+        raise typer.Exit(asyncio.run(runner.run(identity)))
+    except KeyboardInterrupt:  # pragma: no cover - handled by the signal path
+        raise typer.Exit(0) from None
