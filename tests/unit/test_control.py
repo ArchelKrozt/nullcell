@@ -389,3 +389,37 @@ async def test_the_panel_files_cannot_escape_their_directory(panel_client):
 async def test_a_node_without_a_panel_root_serves_no_panel(client):
     response = await client.get("/panel", headers=loopback(), params={"token": client.ui.token})
     assert response.status == 404
+
+
+# ------------------------------------- M9: alcanzable por otro, o no se ofrece
+def test_a_loopback_only_cell_is_not_offered_the_relay_switch():
+    """The bug: the desktop announced 127.0.0.1 and the panel said you could
+    share. Flipping it would publish a relay pointing at your own loopback —
+    an unreachable entry in everybody else's directory."""
+    p = panel(endpoints=["127.0.0.1:4433"])
+    state = p.describe()
+    assert state["can_share"] is False
+    assert state["reach"] == "loopback"
+    assert state["seed"] is None, "una semilla a loopback no le sirve a nadie"
+
+
+async def test_sharing_from_loopback_is_refused_with_the_reason():
+    p = panel(endpoints=["127.0.0.1:4433"])
+    with pytest.raises(ControlError, match="alcanzable"):
+        await p.set_sharing(True)
+
+
+def test_a_lan_cell_can_share_and_is_told_what_that_means():
+    """A LAN is a real network — the machines in one building — so the switch
+    works; it just is not the internet, and the panel says which."""
+    p = panel(endpoints=["192.168.1.20:4433"])
+    state = p.describe()
+    assert state["can_share"] is True
+    assert state["reach"] == "lan"
+    assert "local" in state["reach_detail"]
+    assert state["seed"].endswith("@192.168.1.20:4433")
+
+
+def test_the_furthest_endpoint_decides_how_far_the_cell_reaches():
+    p = panel(endpoints=["127.0.0.1:4433", "8.8.8.8:4433"])
+    assert p.describe()["reach"] == "internet"

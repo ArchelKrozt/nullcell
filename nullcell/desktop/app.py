@@ -29,9 +29,11 @@ __all__ = ["run"]
 _ACTIONS = frozenset({"pick-folder", "open-browser", "quit"})
 
 PANEL_WIDTH = 360
-# Medido sobre el panel renderizado (379 px de contenido), no estimado: a 470
-# quedaba una franja vacía de 90 px bajo el pie.
-PANEL_HEIGHT = 392
+# El alto del contenido ya no es fijo: la caja de semilla aparece sólo cuando
+# aún no hay rutas, y la del portal sólo cuando hay uno. Se dimensiona para el
+# caso con ambas y la página desplaza si se pasa, que es preferible a recortar
+# el pie —donde está «Salir»— cuando el panel crece.
+PANEL_HEIGHT = 560
 
 
 def _icon(size: int = 44):

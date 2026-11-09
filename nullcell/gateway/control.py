@@ -41,6 +41,8 @@ import time
 from pathlib import Path
 from typing import Any, Final
 
+from nullcell.core import reach as reach_mod
+
 __all__ = ["Action", "ControlError", "ControlPanel"]
 
 log = logging.getLogger(__name__)
@@ -171,7 +173,27 @@ class ControlPanel:
         return {"sharing": True, "changed": True, "stored_on": stored, "detail": detail}
 
     def _reachable_endpoints(self) -> list[str]:
-        return [e for e in getattr(self.runtime.node, "endpoints", []) if e]
+        """Endpoints somebody **else** could dial.
+
+        Loopback is filtered out rather than reported: a relay descriptor
+        pointing at 127.0.0.1 is an unreachable entry in everyone's directory
+        and a seed line nobody can use, so offering the switch at all would be
+        offering harm.
+        """
+        return [
+            e
+            for e in getattr(self.runtime.node, "endpoints", [])
+            if e and reach_mod.classify(e) != "loopback"
+        ]
+
+    @property
+    def reach(self) -> str:
+        endpoints = [e for e in getattr(self.runtime.node, "endpoints", []) if e]
+        if not endpoints:
+            return "unknown"
+        # The furthest any of them goes is how far this cell reaches.
+        order = {"loopback": 0, "lan": 1, "unknown": 1, "internet": 2}
+        return max((reach_mod.classify(e) for e in endpoints), key=lambda r: order[r])
 
     # --------------------------------------------------------------- semilla
     async def add_seed(self, line: str) -> dict[str, Any]:
@@ -366,6 +388,8 @@ class ControlPanel:
             "can_share": bool(self._reachable_endpoints()),
             "endpoints": self._relay_endpoints or self._reachable_endpoints(),
             "seed": self.seed_line(),
+            "reach": self.reach,
+            "reach_detail": reach_mod.describe(self.reach),
             "paths_ready": bool(self.runtime.paths.ready),
             "why_not_ready": missing["why"],
             "network": missing,

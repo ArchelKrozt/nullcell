@@ -227,6 +227,17 @@ dom.form.addEventListener("submit", async (event) => {
   }
 });
 
+/* Una búsqueda puede venir en la URL (`/?q=pan`), que es como el navegador de
+ * §9 entrega lo que se escribe en su barra: su barra de direcciones entiende
+ * direcciones .null y, cuando lo tecleado no lo es, lo trata como búsqueda. El
+ * token se quita de la URL al entrar, así que esto corre después. */
+(function buscarDesdeLaURL() {
+  const pedida = new URLSearchParams(location.search).get("q");
+  if (!pedida) return;
+  dom.query.value = pedida;
+  dom.form.requestSubmit();
+})();
+
 function renderResults(results) {
   if (!results.length) {
     dom.results.innerHTML = '<p class="waiting">sin resultados</p>';

@@ -130,10 +130,16 @@ async function refresh() {
     }
     share.disabled = !control.can_share;
     if (!control.can_share) {
-      note("share-note", "Para ofrecerte como relevo, esta celda tiene que saber por dónde " +
-        "es alcanzable: arráncala con --announce y tu IP o nombre público.", true);
+      // Decir "puedes compartir" cuando solo te alcanza tu propia maquina
+      // publicaria un relevo inalcanzable en el directorio de todos.
+      note("share-note", control.reach_detail + " Arráncalo con --announce y tu IP o " +
+        "nombre público, con el puerto UDP abierto.", true);
     } else if (control.wants_sharing && !control.sharing) {
       note("share-note", "Pendiente: se activará en cuanto haya a quién anunciarlo.", false);
+    } else if (control.reach === "lan") {
+      note("share-note", control.reach_detail, false);
+    } else {
+      note("share-note", "", false);
     }
     $("copy-seed").hidden = !control.seed;
     $("copy-seed").dataset.seed = control.seed || "";

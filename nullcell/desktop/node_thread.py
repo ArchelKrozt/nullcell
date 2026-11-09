@@ -48,6 +48,7 @@ class NodeThread:
         self.lan = lan
 
         self.url: str | None = None
+        self.reach: str = "unknown"
         self.token: str | None = None
         self.error: BaseException | None = None
         self.identity: Any = None
@@ -91,6 +92,7 @@ class NodeThread:
     async def _serve(self) -> None:
         from nullcell.cli.runtime import Runtime
         from nullcell.core import config
+        from nullcell.core import reach as reach_mod
         from nullcell.core.identity import Identity
         from nullcell.discovery import pex
         from nullcell.gateway.control import ControlPanel
@@ -113,7 +115,13 @@ class NodeThread:
             log.warning("%s", warning)
         if perm := identity.check_permissions(cfg.path_identity):
             log.warning("%s", perm)
-        endpoints = [self.announce] if self.announce else [f"127.0.0.1:{self.port}"]
+        # Anunciar 127.0.0.1 a ciegas era peor que no anunciar nada: el panel
+        # decía que sí podías compartir, y al activarlo publicabas un relevo
+        # que apunta a tu propio loopback —inalcanzable para todos y basura en
+        # el directorio de los demás— además de ofrecerte copiar una semilla
+        # que nadie podía usar.
+        endpoint, self.reach = reach_mod.best_endpoint(self.port, announce=self.announce)
+        endpoints = [endpoint]
 
         runtime = Runtime.assemble(identity, home, endpoints=endpoints)
         await runtime.listen(self.host, self.port)

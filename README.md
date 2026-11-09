@@ -194,6 +194,22 @@ puede.
   otro y un botón para copiar la tuya.
 - **El navegador sí se queda apagado** hasta que haya circuitos, porque ahí no hay media tinta.
 
+### Lo que compartir ancho de banda hace, y lo que no
+
+Compartir te convierte en **relevo**: ayudas a otros a construir circuitos. **No te conecta a la
+red.** Son dos cosas distintas y conviene no mezclarlas:
+
+| quieres… | necesitas |
+|---|---|
+| **entrar** a la red | conocer al menos otra celda: una **semilla**. No hay descubrimiento global |
+| **navegar** | 3 relevos de operadores distintos, observados 10 min (§7) |
+| **ser relevo** | que otros puedan alcanzarte: IP pública con el puerto UDP abierto, o la LAN |
+
+El escritorio detecta solo por dónde es alcanzable —**sin hacer ninguna petición a internet**: una
+consulta a un servicio de "cuál es mi IP" le diría a ese servicio que aquí hay un nodo— y el panel
+te dice cuál de los tres casos es el tuyo. En una LAN la semilla que te da funciona de verdad para
+los equipos de tu casa, que es la forma más fácil de levantar la primera red con dos ordenadores.
+
 **El navegador no necesita autoridad de certificación.** La CA de §8 existe para que un navegador
 ajeno acepte `https://…null`; el nuestro registra el esquema `null://` y entrega los bytes del
 circuito directamente al renderizador. Cada dirección sigue siendo su propio origen
