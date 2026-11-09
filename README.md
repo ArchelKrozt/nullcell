@@ -3,22 +3,25 @@
 Red P2P cifrada y anónima: circuitos onion de 3 saltos sobre QUIC, sin autoridades de directorio.
 Direcciones `.null` autocertificadas. Python 3.11+, sin root.
 
-**Estado: M3.** Identidad, marcos, enlace QUIC verificado, DHT Kademlia y **circuitos onion de
-3 saltos** funcionan, con selección de ruta, control de flujo y un HUD de depuración.
+**Estado: M4.** Identidad, marcos, enlace QUIC verificado, DHT Kademlia, circuitos onion de 3
+saltos y **rendezvous** funcionan. Un servicio se publica **sin IP pública, sin UPnP y sin abrir
+un solo puerto**: todas sus conexiones son salientes.
 
-> ### ⚠ Aún no la uses para nada que requiera anonimato
+> ### ⚠ Qué está verificado y qué sigue abierto
 >
-> Los circuitos existen y sus propiedades están verificadas en los tests: el salto del medio no
-> conoce origen ni destino, y una trama manipulada derribael circuito. **Pero faltan dos cosas:**
+> **Verificado en los tests, no inferido:** el salto del medio de un circuito no conoce origen ni
+> destino; una trama manipulada derriba el circuito; dos extremos se hablan sin abrir puertos; el
+> punto de encuentro reenvía bytes que no puede leer; un nodo del DHT verifica un descriptor
+> privado sin saber de quién es; y una consulta de DHT por circuito no lleva nada del que pregunta.
 >
-> 1. **El DHT todavía no va por circuitos.** §7 decidió que sí, y `dht/transport.py` es la costura
->    preparada para ello, pero hoy `DirectTransport` consulta por enlace directo y revela tu IP y
->    qué buscas a nodos cualesquiera.
-> 2. **No hay rendezvous (M4),** así que no hay servicios ocultos ni anonimato del lado que
->    publica.
+> **Sigue abierto, y es el límite de fondo del proyecto (§7):** la selección descentralizada de
+> relevos es un problema abierto de investigación. Lo que hay es la mitigación pragmática —guards
+> fijados, diversidad de prefijos, antigüedad mínima, PoW— **no una solución demostrada** frente a
+> ataques Sybil y de eclipse. Y la correlación de tráfico extremo a extremo no está resuelta, igual
+> que en Tor.
 >
-> Y el límite de fondo de §7 sigue en pie: la selección descentralizada de relevos es un problema
-> abierto de investigación. Lo que hay es la mitigación pragmática, no una solución demostrada.
+> **Falta además** lo que da la experiencia de usuario: no hay SOCKS5, ni CA local, ni `ncell
+> browse`, ni `ncell host` (M5). Hoy esto es una biblioteca y un CLI, no algo que se navegue.
 
 La arquitectura completa está en [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md). Las
 referencias `§N` de este README y del código apuntan a ese documento.
@@ -104,8 +107,10 @@ NULLCELL_HOME=/tmp/b ncell ping <NID-de-a> --addr 127.0.0.1:4455
 | Selección de ruta: guards fijados, diversidad de prefijos, antigüedad mínima (§7) | ✅ |
 | SENDME por circuito y por stream, vida del circuito (§5) | ✅ |
 | HUD mínimo de depuración, `ncell node --hud` (§9) | ✅ |
+| L2b rendezvous, puntos de enlace, 6 saltos extremo a extremo (§6) | ✅ |
+| Servicios privados: índice cegado y cuerpo cifrado (§6) | ✅ |
+| DHT por circuitos, con circuito de directorio reutilizado (decisión 8) | ✅ |
 | Diversidad por ASN (§7) | ❌ — ver §7, el motivo está documentado |
-| DHT por circuitos (decisión 8) | ❌ M4 |
 | L2b rendezvous, intro points (§6) | ❌ M4 |
 | SOCKS5, CA local, `ncell browse`, `ncell host` (§8) | ❌ M5 |
 | Buscador y HUD (§8, §9) | ❌ M7 |

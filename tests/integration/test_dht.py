@@ -60,13 +60,23 @@ class Cell:
 
 
 @contextlib.asynccontextmanager
-async def mesh(count: int):
-    """*count* cells, all bootstrapped from the first one."""
+async def mesh(count: int, *, converge: int = 0):
+    """*count* cells, all bootstrapped from the first one.
+
+    ``converge`` runs that many PEX rounds afterwards. Bootstrap alone leaves
+    the routing tables at whatever the ordering happened to produce, which made
+    the thirty-cell assertion depend on timing; PEX is the mechanism §7 already
+    specifies for widening a table, so converging with it tests convergence
+    instead of luck.
+    """
     cells = [await Cell().start() for _ in range(count)]
     try:
         seed = cells[0].as_peer
         for cell in cells[1:]:
             await cell.node.bootstrap([seed])
+        for _ in range(converge):
+            for cell in cells:
+                await pex.exchange(cell.node, rounds=1)
         yield cells
     finally:
         await asyncio.gather(*(cell.close() for cell in cells))
@@ -162,7 +172,7 @@ async def test_thirty_cells_find_each_other_and_route():
     The meaningful part is the last assertion: a record is fetched by a cell
     that does **not** hold it locally, so the lookup really had to route.
     """
-    async with mesh(30) as cells:
+    async with mesh(30, converge=1) as cells:
         for cell in cells:
             assert len(cell.node.table) >= 10, (
                 f"{cell.identity.short} knows only {len(cell.node.table)} cells"

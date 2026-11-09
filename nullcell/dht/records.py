@@ -65,7 +65,8 @@ _MAX_TTL: Final[int] = 24 * 3600
 
 class RecordType(StrEnum):
     RELAY = "relay"
-    SERVICE = "service"
+    SERVICE = "service"  # public portal: in the clear, indexed, enumerable
+    PRIVATE = "private"  # private service: blinded index, encrypted body (§6)
     KEYWORD = "keyword"
     NAME = "name"
 
@@ -233,6 +234,19 @@ def _expected_key(record_type: RecordType, pub: bytes, body: dict[str, Any]) -> 
     """
     if record_type in (RecordType.RELAY, RecordType.SERVICE):
         return ids.routing_key(pub)
+    if record_type is RecordType.PRIVATE:
+        # The `pub` field holds the *blinded* key, so the binding can be
+        # checked without anyone learning the real one (§6). The storing node
+        # therefore refuses a record filed under an index that does not match
+        # the blinded key it carries.
+        period = body.get("p")
+        if not isinstance(period, int):
+            return None
+        import hashlib
+
+        return hashlib.sha256(
+            b"nullcell-index" + pub + period.to_bytes(8, "big", signed=True)
+        ).digest()
     if record_type is RecordType.NAME:
         name = body.get("name")
         return name_key(name) if isinstance(name, str) else None

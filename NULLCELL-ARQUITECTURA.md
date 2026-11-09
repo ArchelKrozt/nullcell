@@ -287,6 +287,15 @@ las tres cosas en local, sin red.
 El servicio firma el descriptor con la **clave cegada** del periodo, no con la real, para que el
 nodo que almacena pueda verificar que el registro es legítimo sin aprender de quién es.
 
+> **Construido en M4** (`dht/private.py`, `onion/blinding.py`). El registro lleva la clave
+> **cegada** en su campo `pub`, así que una verificación Ed25519 normal funciona y la clave real no
+> aparece en ninguna parte. Comprobado en los tests: el nodo del DHT verifica el descriptor sin
+> saber de quién es, quien tiene la dirección lo abre, otra dirección no, y la clave real no está
+> en los bytes del registro.
+>
+> **Y el PoW de un descriptor privado cuesta lo mismo que uno público** (9 bits). La privacidad no
+> es un descuento: si lo fuera, el camino barato para inundar el DHT sería publicar en privado.
+
 ## 7. L1b — Descubrimiento y selección de relays (la parte delicada)
 
 **DHT Kademlia** (k=20, XOR sobre `sha256(pub)` — la **clave de enrutamiento**, que no es la
@@ -371,6 +380,12 @@ Tres mitigaciones, las tres necesarias:
 no revelan interés por ningún contenido concreto) puede ir directo **si el nodo es un relevo
 público** — ya es alcanzable y no tiene IP que esconder. Un cliente puro lo manda todo por
 circuito, sin excepciones.
+
+> **Construido en M4.** `dht/transport.py` tiene las dos implementaciones y Kademlia no sabe cuál
+> usa. `CircuitTransport` alcanza al nodo consultado como **salida** de un circuito de 3 saltos, y
+> mantiene **un solo circuito de directorio reutilizado**: medido, 1 construcción para 5
+> peticiones. Cada transporte declara `anonymous`, y el HUD lo muestra, porque la diferencia entre
+> los dos *es* la decisión 8 y no debe quedar implícita.
 
 ## 8. L3/L4 — Servicios, nombres, acceso y buscador
 

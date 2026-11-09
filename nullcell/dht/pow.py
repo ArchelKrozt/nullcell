@@ -68,6 +68,7 @@ DIFFICULTY: Final[dict[str, int]] = {
     # distribution is geometric: individual solves vary by several times.
     "relay": 9,  # ~0,5 s — renewed hourly by every relay
     "service": 9,  # ~0,5 s — renewed within its TTL
+    "private": 9,  # ~0,5 s — same cost; privacy is not a discount
     "keyword": 11,  # ~1,9 s each; a site with 10 keywords pays ~19 s
     "name": 14,  # ~15 s — first-come on a scarce global namespace
 }

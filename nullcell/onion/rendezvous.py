@@ -117,22 +117,27 @@ class RendezvousPointService:
             self.relay.send_back(other, RelayCmd.END, b"the other side went away")
 
 
-def install(relay: RelayService, identity) -> tuple:
-    """Give *relay* the intro point and rendezvous point roles (§6).
+def install(relay: RelayService, identity, *, dht=None) -> tuple:
+    """Give *relay* the roles it can play for other people's circuits.
 
-    Both are relay roles, so one relay can be either or both. They are chained
-    onto the single ``on_relay_message`` seam in the order a message is most
-    likely to need.
+    Intro point and rendezvous point are both relay roles (§6), so one relay
+    can be either or both, and a relay that also runs a DHT node can answer
+    lookups arriving over a circuit (§7, decision 8). All three are chained
+    onto the single ``on_relay_message`` seam, splice traffic first because it
+    is the hot path.
     """
     from nullcell.onion.intro_point import IntroPointService
 
     intro = IntroPointService(relay, identity)
     rendezvous = RendezvousPointService(relay)
+    dht_handler = dht.circuit_handler(relay) if dht is not None else None
 
     def dispatch(leg: CircuitLeg, header: RelayHeader) -> None:
         if rendezvous.handle(leg, header):
             return
         if intro.handle(leg, header):
+            return
+        if dht_handler is not None and dht_handler(leg, header):
             return
         log.debug("unhandled relay cmd %s", header.rcmd)
 

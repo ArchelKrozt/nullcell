@@ -20,6 +20,7 @@ import time
 from typing import Any, Final
 
 from nullcell.core import ids
+from nullcell.core.frames import RelayCmd
 from nullcell.core.identity import Identity
 from nullcell.dht import protocol as proto
 from nullcell.dht import records as rec
@@ -71,6 +72,29 @@ class KademliaNode:
         mux.set_handler(self._handle)
         self._muxes.append(mux)
         return mux
+
+    def circuit_handler(self, relay) -> object:
+        """A handler that answers DHT requests arriving over a circuit (§7).
+
+        Chained onto a relay's ``on_relay_message`` seam. A client using
+        :class:`~nullcell.dht.transport.CircuitTransport` reaches this node as
+        the **exit** of its circuit, so the request arrives as relay ``DATA``
+        and the answer goes back down the same circuit. Nothing about the
+        caller travels with it, which is the whole of decision 8.
+        """
+
+        def handle(leg, header) -> bool:
+            if header.rcmd != RelayCmd.DATA:
+                return False
+            asyncio.ensure_future(self._answer_over_circuit(relay, leg, header.payload))
+            return True
+
+        return handle
+
+    async def _answer_over_circuit(self, relay, leg, request: bytes) -> None:
+        reply = await self._handle(request)
+        if reply is not None:
+            relay.send_back(leg, RelayCmd.DATA, reply, stream_id=1)
 
     async def _handle(self, blob: bytes) -> bytes | None:
         self.stats["rpc_in"] += 1
