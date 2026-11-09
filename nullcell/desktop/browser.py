@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from nullcell.desktop import browser_chrome as chrome
+from nullcell.desktop import failures
 from nullcell.desktop.scheme import SCHEME
 
 log = logging.getLogger(__name__)
@@ -99,9 +100,8 @@ class NullSchemeHandler(QWebEngineUrlSchemeHandler):
                 fetched = await self._fetcher_for().fetch(host, path)
             except Exception as exc:  # noqa: BLE001 - every failure is shown
                 log.info("null://%s%s falló: %s", host[:10], path, exc)
-                self.answered.emit(
-                    job, 502, b"text/html", _error_page("No se pudo abrir", str(exc))
-                )
+                title, detail = failures.explain(exc, host)
+                self.answered.emit(job, 502, b"text/html", _error_page(title, detail))
                 return
             self.answered.emit(
                 job, fetched.status, fetched.content_type.encode("latin-1"), fetched.body

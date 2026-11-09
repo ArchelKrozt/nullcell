@@ -11,3 +11,11 @@ venv/
 # Estado del nodo: nunca en el repo, nunca sincronizado (ver §12)
 .nullcell/
 *.key
+
+# Una carpeta de despliegue puede llevar la identidad de la celda, que es una
+# CLAVE PRIVADA — y la dirección .null *es* esa clave (§3). Ignorada por ruta
+# y por nombre: publicarla por accidente no se deshace rotando nada, porque
+# rotar la clave significa perder la dirección y el nombre.
+identity.key
+*/identity.key
+**/identity.key

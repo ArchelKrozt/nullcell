@@ -39,6 +39,7 @@ class NodeThread:
         announce: str | None = None,
         seeds: list[str] | None = None,
         lan: bool = False,
+        config: str | None = None,
     ) -> None:
         self.port = port
         self.host = host
@@ -46,6 +47,7 @@ class NodeThread:
         self.announce = announce
         self.seeds = seeds or []
         self.lan = lan
+        self.config = config
 
         self.url: str | None = None
         self.reach: str = "unknown"
@@ -107,13 +109,23 @@ class NodeThread:
         # `load_or_create` returns (identity, created): unpacked here because
         # taking the tuple as an identity fails much later, inside the first
         # handshake, with a message about neither identities nor tuples.
-        identity, created = Identity.load_or_create(cfg.path_identity)
+        key_path = cfg.path_identity
+        if self.config:
+            from nullcell.host.deployment import Deployment
+
+            carried = Deployment.load(self.config).identity_path
+            if carried is not None:
+                # The address *is* the key (§3). A deployment that carries its
+                # own identity keeps its .null name when it moves; one that
+                # does not becomes a different cell on the new machine.
+                key_path = carried
+        identity, created = Identity.load_or_create(key_path)
         if created:
-            log.info("identidad nueva en %s", cfg.path_identity)
+            log.info("identidad nueva en %s", key_path)
         self.identity = identity
         if warning := config.cloud_synced_warning():
             log.warning("%s", warning)
-        if perm := identity.check_permissions(cfg.path_identity):
+        if perm := identity.check_permissions(key_path):
             log.warning("%s", perm)
         # Anunciar 127.0.0.1 a ciegas era peor que no anunciar nada: el panel
         # decía que sí podías compartir, y al activarlo publicabas un relevo
@@ -132,7 +144,14 @@ class NodeThread:
         bus = EventBus()
         runtime.open_index()
         await runtime.refresh_portals()
-        panel = ControlPanel(runtime, home=home)
+        deployment = None
+        if self.config:
+            from nullcell.host.deployment import Deployment
+
+            deployment = Deployment.load(self.config)
+            for warning in deployment.warnings():
+                log.warning("%s", warning)
+        panel = ControlPanel(runtime, home=home, deployment=deployment)
         ui = LocalUI(
             runtime.status,
             bus,

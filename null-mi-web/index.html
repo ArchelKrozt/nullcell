@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nullcell — qué es, cómo funciona y qué le falta</title>
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <h1>NULLCELL</h1>
+    <p class="tagline">Una red P2P cifrada y anónima: circuitos onion sobre QUIC, sin autoridades
+      de directorio, con su propio espacio de nombres <code>.null</code> y un buscador dentro.</p>
+    <span class="addr">este portal vive en <b>nullcell.null</b> — servido desde una celda, sin
+      dominio, sin IP pública y sin certificado</span>
+    <nav>
+      <a href="#que">Qué es</a>
+      <a href="#como">Cómo funciona</a>
+      <a href="#nombres">Nombres .null</a>
+      <a href="#estado">Qué está hecho</a>
+      <a href="#falta">Qué falta</a>
+      <a href="#medido">Lo medido</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- ====================================================== QUÉ ES ======= -->
+<h2 id="que"><span class="num">01</span>Qué es</h2>
+
+<p>Nullcell es una <strong>segunda internet</strong>: una red superpuesta donde quien publica no
+revela dónde está, quien visita no revela a quién visita, y <em>ningún punto del camino sabe las dos
+cosas</em>. No hay autoridades de directorio, no hay registradores de dominios y no hay servidores
+centrales a los que pedir permiso.</p>
+
+<div class="figures">
+  <div class="fig"><span class="n">3</span><span class="l">saltos por circuito</span></div>
+  <div class="fig"><span class="n">6</span><span class="l">saltos extremo a extremo</span></div>
+  <div class="fig"><span class="n">512 B</span><span class="l">marcos de tamaño fijo</span></div>
+  <div class="fig"><span class="n">56</span><span class="l">caracteres por dirección</span></div>
+  <div class="fig"><span class="n">0</span><span class="l">autoridades centrales</span></div>
+</div>
+
+<div class="card">
+  <h3>La idea en una frase</h3>
+  <p>Tu tráfico pasa por tres relevos que no se conocen entre sí: el primero sabe quién eres pero no
+  adónde vas, el tercero sabe adónde vas pero no quién eres, y el de en medio no sabe ninguna de las
+  dos. Para alcanzar un portal, <em>los dos extremos</em> hacen eso a la vez y se encuentran a mitad
+  de camino: seis saltos, y ni el portal sabe dónde estás tú ni tú dónde está él.</p>
+</div>
+
+<!-- ==================================================== CÓMO FUNCIONA == -->
+<h2 id="como"><span class="num">02</span>Cómo funciona</h2>
+
+<h3>Un circuito de 3 saltos</h3>
+<figure>
+<div class="svg-card">
+<svg viewBox="0 0 820 190" role="img" aria-label="Diagrama de un circuito de tres saltos: el cliente conecta con un guard, este con un relevo intermedio y este con la salida. Cada salto pela una capa de cifrado.">
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#22d3ee"/>
+    </marker>
+  </defs>
+  <g font-family="ui-monospace,Menlo,monospace" font-size="12">
+    <!-- nodos -->
+    <g>
+      <rect x="8" y="58" width="104" height="48" rx="3" fill="#121922" stroke="#22d3ee"/>
+      <text x="60" y="80" fill="#e6edf3" text-anchor="middle">TÚ</text>
+      <text x="60" y="96" fill="#7d8da3" text-anchor="middle" font-size="10">cliente</text>
+    </g>
+    <g>
+      <rect x="186" y="58" width="104" height="48" rx="3" fill="#0d1117" stroke="#1d2733"/>
+      <text x="238" y="80" fill="#e6edf3" text-anchor="middle">GUARD</text>
+      <text x="238" y="96" fill="#7d8da3" text-anchor="middle" font-size="10">salto 1</text>
+    </g>
+    <g>
+      <rect x="364" y="58" width="104" height="48" rx="3" fill="#0d1117" stroke="#1d2733"/>
+      <text x="416" y="80" fill="#e6edf3" text-anchor="middle">MEDIO</text>
+      <text x="416" y="96" fill="#7d8da3" text-anchor="middle" font-size="10">salto 2</text>
+    </g>
+    <g>
+      <rect x="542" y="58" width="104" height="48" rx="3" fill="#0d1117" stroke="#1d2733"/>
+      <text x="594" y="80" fill="#e6edf3" text-anchor="middle">SALIDA</text>
+      <text x="594" y="96" fill="#7d8da3" text-anchor="middle" font-size="10">salto 3</text>
+    </g>
+    <g>
+      <rect x="712" y="58" width="100" height="48" rx="3" fill="#121922" stroke="#34d399"/>
+      <text x="762" y="80" fill="#e6edf3" text-anchor="middle">PORTAL</text>
+      <text x="762" y="96" fill="#7d8da3" text-anchor="middle" font-size="10">.null</text>
+    </g>
+    <!-- flechas -->
+    <g stroke="#22d3ee" stroke-width="1.5" marker-end="url(#a)">
+      <line x1="114" y1="82" x2="178" y2="82"/>
+      <line x1="292" y1="82" x2="356" y2="82"/>
+      <line x1="470" y1="82" x2="534" y2="82"/>
+      <line x1="648" y1="82" x2="706" y2="82"/>
+    </g>
+    <!-- capas -->
+    <g font-size="10" fill="#7d8da3" text-anchor="middle">
+      <text x="146" y="72">3 capas</text>
+      <text x="324" y="72">2 capas</text>
+      <text x="502" y="72">1 capa</text>
+      <text x="677" y="72">claro*</text>
+    </g>
+    <!-- lo que sabe cada uno -->
+    <g font-size="10" text-anchor="middle">
+      <text x="238" y="135" fill="#fbbf24">sabe QUIÉN eres</text>
+      <text x="238" y="149" fill="#7d8da3">no sabe adónde vas</text>
+      <text x="416" y="135" fill="#34d399">no sabe nada</text>
+      <text x="416" y="149" fill="#7d8da3">ni origen ni destino</text>
+      <text x="594" y="135" fill="#fbbf24">sabe ADÓNDE vas</text>
+      <text x="594" y="149" fill="#7d8da3">no sabe quién eres</text>
+    </g>
+    <text x="677" y="172" fill="#7d8da3" font-size="9" text-anchor="middle">
+      *con rendezvous, la salida tampoco ve el destino real
+    </text>
+  </g>
+</svg>
+</div>
+<figcaption>Cada relevo quita una capa de cifrado y sólo conoce a su vecino anterior y al
+siguiente. La propiedad que importa no es que haya tres saltos: es que <strong>el del medio no
+puede saber ni de dónde viene ni adónde va</strong>.</figcaption>
+</figure>
+
+<h3>Seis saltos: cómo se alcanza un portal sin saber dónde está</h3>
+<figure>
+<div class="svg-card">
+<svg viewBox="0 0 820 230" role="img" aria-label="Diagrama de rendezvous: el cliente construye un circuito de tres saltos hasta un punto de encuentro, y el portal construye otro de tres saltos hasta el mismo punto. Se unen ahí, seis saltos en total.">
+  <g font-family="ui-monospace,Menlo,monospace" font-size="12">
+    <g stroke="#1d2733" stroke-width="1.5" fill="none">
+      <path d="M96,52 L250,52 L404,52 L404,106"/>
+      <path d="M724,178 L570,178 L416,178 L416,124"/>
+    </g>
+    <g fill="#0d1117" stroke="#1d2733">
+      <rect x="186" y="34" width="86" height="36" rx="3"/>
+      <rect x="300" y="34" width="86" height="36" rx="3"/>
+      <rect x="548" y="160" width="86" height="36" rx="3"/>
+      <rect x="434" y="160" width="86" height="36" rx="3"/>
+    </g>
+    <g fill="#7d8da3" font-size="10" text-anchor="middle">
+      <text x="229" y="56">relevo</text><text x="343" y="56">relevo</text>
+      <text x="591" y="182">relevo</text><text x="477" y="182">relevo</text>
+    </g>
+    <g>
+      <rect x="8" y="34" width="86" height="36" rx="3" fill="#121922" stroke="#22d3ee"/>
+      <text x="51" y="57" fill="#e6edf3" text-anchor="middle">TÚ</text>
+      <rect x="726" y="160" width="86" height="36" rx="3" fill="#121922" stroke="#34d399"/>
+      <text x="769" y="183" fill="#e6edf3" text-anchor="middle">PORTAL</text>
+    </g>
+    <g>
+      <rect x="352" y="100" width="116" height="30" rx="15" fill="#0d1117" stroke="#ff00ff"/>
+      <text x="410" y="120" fill="#ff00ff" text-anchor="middle" font-size="11">RENDEZVOUS</text>
+    </g>
+    <g font-size="10" fill="#7d8da3">
+      <text x="8" y="92">tus 3 saltos →</text>
+      <text x="700" y="146" text-anchor="end">← sus 3 saltos</text>
+    </g>
+    <text x="410" y="216" fill="#7d8da3" font-size="10" text-anchor="middle">
+      El punto de encuentro mueve bytes que no puede leer: el cifrado extremo a extremo es de los dos extremos.
+    </text>
+  </g>
+</svg>
+</div>
+<figcaption>Tú construyes tres saltos hasta un punto de encuentro; el portal construye otros tres
+hasta el mismo punto. <strong>Seis saltos</strong>, y el punto de encuentro —que es el único que ve
+a los dos— no puede leer nada de lo que pasa por él.</figcaption>
+</figure>
+
+<h3>Por qué todos los marcos miden lo mismo</h3>
+<p>Un observador que mire el cable no debería distinguir una petición de una respuesta, ni una
+descarga grande de una pequeña. Por eso todo viaja en marcos de <strong>512 bytes exactos</strong>,
+se rellene lo que se rellene, y los relevos emiten relleno cuando están ociosos.</p>
+
+<figure>
+<div class="svg-card">
+<svg viewBox="0 0 820 118" role="img" aria-label="Composición de un marco de 512 bytes: 5 bytes de cabecera, 11 de subcabecera relay y 496 de datos.">
+  <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+    <rect x="10" y="26" width="42" height="40" fill="#ff00ff" opacity=".65" stroke="#1d2733"/>
+    <rect x="52" y="26" width="86" height="40" fill="#fbbf24" opacity=".55" stroke="#1d2733"/>
+    <rect x="138" y="26" width="672" height="40" fill="#22d3ee" opacity=".32" stroke="#1d2733"/>
+    <g fill="#e6edf3" text-anchor="middle">
+      <text x="31" y="51">5</text><text x="95" y="51">11</text><text x="474" y="51">496</text>
+    </g>
+    <g fill="#7d8da3" text-anchor="middle" font-size="10">
+      <text x="31" y="84">cabecera</text>
+      <text x="95" y="84">relay</text>
+      <text x="474" y="84">datos útiles</text>
+      <text x="474" y="100">(rellenados si sobra sitio: el tamaño nunca delata el contenido)</text>
+    </g>
+    <text x="10" y="18" fill="#7d8da3" font-size="10">512 bytes, siempre</text>
+  </g>
+</svg>
+</div>
+</figure>
+
+<!-- ====================================================== NOMBRES ====== -->
+<h2 id="nombres"><span class="num">03</span>Nombres <code>.null</code></h2>
+
+<p>Una dirección de Nullcell <em>es</em> una clave pública: 56 caracteres que nadie asigna y nadie
+puede quitarte. Un nombre legible como <code>nullcell.null</code> es un registro en el DHT que
+apunta a esa clave: <strong>primero que llega, se lo queda</strong>, sin registrador y sin cuota.</p>
+
+<figure>
+<div class="svg-card">
+<svg viewBox="0 0 820 200" role="img" aria-label="Cómo se resuelve un nombre: el nombre se busca en el DHT y devuelve una clave pública; la clave devuelve un descriptor con puntos de enlace; con ellos se alcanza el portal.">
+  <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+    <defs>
+      <marker id="b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+        <path d="M0,0 L9,4.5 L0,9 z" fill="#7d8da3"/>
+      </marker>
+    </defs>
+    <g>
+      <rect x="10" y="40" width="176" height="56" rx="3" fill="#121922" stroke="#22d3ee"/>
+      <text x="98" y="64" fill="#22d3ee" text-anchor="middle" font-size="13">nullcell.null</text>
+      <text x="98" y="82" fill="#7d8da3" text-anchor="middle" font-size="10">lo que escribes</text>
+    </g>
+    <g>
+      <rect x="236" y="40" width="176" height="56" rx="3" fill="#0d1117" stroke="#1d2733"/>
+      <text x="324" y="62" fill="#e6edf3" text-anchor="middle" font-size="10">registro NAME</text>
+      <text x="324" y="80" fill="#7d8da3" text-anchor="middle" font-size="10">en el DHT → clave</text>
+    </g>
+    <g>
+      <rect x="462" y="40" width="176" height="56" rx="3" fill="#0d1117" stroke="#1d2733"/>
+      <text x="550" y="62" fill="#e6edf3" text-anchor="middle" font-size="10">descriptor</text>
+      <text x="550" y="80" fill="#7d8da3" text-anchor="middle" font-size="10">puntos de enlace</text>
+    </g>
+    <g>
+      <rect x="688" y="40" width="122" height="56" rx="3" fill="#121922" stroke="#34d399"/>
+      <text x="749" y="70" fill="#34d399" text-anchor="middle" font-size="11">PORTAL</text>
+    </g>
+    <g stroke="#7d8da3" stroke-width="1.2" marker-end="url(#b)">
+      <line x1="188" y1="68" x2="230" y2="68"/>
+      <line x1="414" y1="68" x2="456" y2="68"/>
+      <line x1="640" y1="68" x2="682" y2="68"/>
+    </g>
+    <g fill="#7d8da3" font-size="10" text-anchor="middle">
+      <text x="324" y="128">firmado por su dueño</text>
+      <text x="550" y="128">caduca en 1 h</text>
+      <text x="550" y="143" fill="#fbbf24">si nadie lo renueva → apagado</text>
+    </g>
+    <text x="410" y="180" fill="#7d8da3" font-size="10" text-anchor="middle">
+      Las consultas del cliente van por circuito (§7, decisión 8): quien guarda el registro no aprende quién pregunta.
+    </text>
+  </g>
+</svg>
+</div>
+<figcaption>El descriptor <strong>caduca en una hora</strong> y la celda lo renueva sola mientras
+está encendida. Por eso un portal apagado deja de resolverse solo, sin que nadie tenga que borrar
+nada: la ausencia es el mecanismo.</figcaption>
+</figure>
+
+<div class="card warn">
+  <h3>Qué pasa si apagas el Mac</h3>
+  <p>El nombre <strong>no se pierde</strong>: el registro <code>NAME</code> sigue apuntando a tu
+  clave. Lo que desaparece es el <em>descriptor</em>, que dice por dónde alcanzarte, porque nadie lo
+  renueva. Quien visite verá <strong>«el portal existe pero está apagado»</strong> —no un error
+  genérico y no «no existe»—, y al encender vuelve solo en cuanto se republica.</p>
+  <p class="lead">Y porque el nombre vive atado a la clave: <strong>la dirección <em>es</em> la
+  clave</strong>. Si migras a una Raspberry Pi sin llevarte <code>identity.key</code>, la celda
+  nueva tendrá otra dirección y el nombre seguirá apuntando a la vieja.</p>
+</div>
+
+<!-- ======================================================= ESTADO ====== -->
+<h2 id="estado"><span class="num">04</span>Qué está hecho</h2>
+
+<div class="figures">
+  <div class="fig"><span class="n">507</span><span class="l">tests que pasan</span></div>
+  <div class="fig"><span class="n">77</span><span class="l">módulos</span></div>
+  <div class="fig"><span class="n">13 807</span><span class="l">líneas de código</span></div>
+  <div class="fig"><span class="n">6 374</span><span class="l">líneas de tests</span></div>
+  <div class="fig"><span class="n">M0–M9</span><span class="l">hitos cerrados</span></div>
+</div>
+
+<div class="bars">
+  <div class="bar-row"><span>Transporte y marcos</span>
+    <span class="track"><span class="val" style="width:100%"></span></span><span class="pct">100%</span></div>
+  <div class="bar-row"><span>Circuitos onion</span>
+    <span class="track"><span class="val" style="width:100%"></span></span><span class="pct">100%</span></div>
+  <div class="bar-row"><span>DHT y descubrimiento</span>
+    <span class="track"><span class="val" style="width:100%"></span></span><span class="pct">100%</span></div>
+  <div class="bar-row"><span>Portales y nombres</span>
+    <span class="track"><span class="val" style="width:100%"></span></span><span class="pct">100%</span></div>
+  <div class="bar-row"><span>Buscador</span>
+    <span class="track"><span class="val" style="width:100%"></span></span><span class="pct">100%</span></div>
+  <div class="bar-row"><span>Escritorio y navegador</span>
+    <span class="track"><span class="val part" style="width:75%"></span></span><span class="pct">75%</span></div>
+  <div class="bar-row"><span>Probado en red real</span>
+    <span class="track"><span class="val no" style="width:10%"></span></span><span class="pct">10%</span></div>
+  <div class="bar-row"><span>Auditoría externa</span>
+    <span class="track"><span class="val no" style="width:0%"></span></span><span class="pct">0%</span></div>
+</div>
+
+<p class="lead">Las dos últimas barras son las que deciden si esto es utilizable, y son las dos
+más bajas. Lo que sigue lo explica sin maquillaje.</p>
+
+<!-- ======================================================== FALTA ====== -->
+<h2 id="falta"><span class="num">05</span>Qué falta para estar operativo</h2>
+
+<table>
+  <thead><tr><th>Pieza</th><th>Estado</th><th>Qué significa</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Una red con gente</strong></td>
+      <td><span class="state no">bloqueante</span></td>
+      <td>§7 exige 3 relevos de <em>operadores distintos</em>, observados 10 min. Con un solo
+          ordenador no hay circuito posible: el anonimato lo da la multitud, no el código.</td>
+    </tr>
+    <tr>
+      <td><strong>Probado entre máquinas reales</strong></td>
+      <td><span class="state no">sin hacer</span></td>
+      <td>Todo está medido en una máquina o en laboratorio. Nadie ha corrido aún un circuito
+          entre tres proveedores de verdad, con sus latencias y sus NAT.</td>
+    </tr>
+    <tr>
+      <td><strong>Auditoría criptográfica externa</strong></td>
+      <td><span class="state no">sin hacer</span></td>
+      <td>El cegado de claves (§6) y los apretones de manos los ha escrito y revisado una sola
+          cabeza. Eso no basta para una red que promete anonimato.</td>
+    </tr>
+    <tr>
+      <td><strong>Navegador <code>null://</code> de punta a punta</strong></td>
+      <td><span class="state part">a medias</span></td>
+      <td>El esquema, el aislamiento entre portales y el parser HTTP están verificados. El camino
+          completo por circuito no se ha podido probar: hace falta una red.</td>
+    </tr>
+    <tr>
+      <td><strong>Imagen Docker construida</strong></td>
+      <td><span class="state part">sin construir</span></td>
+      <td>El <code>Dockerfile</code> y los <code>compose</code> están escritos y validados, pero
+          nadie ha ejecutado <code>docker build</code> todavía.</td>
+    </tr>
+    <tr>
+      <td><strong>Diversidad por ASN</strong></td>
+      <td><span class="state part">aproximada</span></td>
+      <td>Se usa el prefijo /16 como sustituto. Dos /16 distintos pueden estar en el mismo
+          operador, así que la diversidad real es más débil de lo que parece.</td>
+    </tr>
+    <tr>
+      <td><strong>Resistencia a Sybil</strong></td>
+      <td><span class="state part">pragmática</span></td>
+      <td>PoW + antigüedad observada + diversidad encarecen inundar la red, pero no es una
+          solución demostrada. Sigue siendo un problema abierto de investigación.</td>
+    </tr>
+    <tr>
+      <td><strong>Correlación de tráfico extremo a extremo</strong></td>
+      <td><span class="state no">no resuelta</span></td>
+      <td>Tampoco en Tor. Se mitiga con guards fijos, marcos uniformes y relleno. Un adversario
+          que vea <em>toda</em> la red está fuera del modelo de amenaza.</td>
+    </tr>
+    <tr>
+      <td><strong>Modo TUN y listas de bloqueo firmadas</strong></td>
+      <td><span class="state no">sin empezar</span></td>
+      <td>Pensados, no escritos.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="card alert">
+  <h3>Lo que esto <em>no</em> es todavía</h3>
+  <p>No es una red en la que debas confiar secretos. Está completa como implementación y sin
+  estrenar como red: faltan usuarios, falta una auditoría y falta kilometraje. Cualquier otra cosa
+  que leas sobre su estado —incluida la que escriba yo— debería contrastarse con esta tabla.</p>
+</div>
+
+<!-- ======================================================= MEDIDO ====== -->
+<h2 id="medido"><span class="num">06</span>Lo que está medido</h2>
+
+<p>Ninguna cifra de aquí es una estimación. Cada una salió de ejecutar el código, y varias
+<em>corrigieron</em> lo que el documento de arquitectura daba por supuesto.</p>
+
+<table>
+  <thead><tr><th>Medida</th><th>Valor</th><th>Qué enseñó</th></tr></thead>
+  <tbody>
+    <tr><td>Eficiencia de la capa onion</td><td><strong>99 %</strong></td>
+        <td>Tres capas de ChaCha20 y los digests acumulados son esencialmente gratis: el techo lo
+            pone QUIC, no el anonimato.</td></tr>
+    <tr><td>Búsqueda en el DHT</td><td><strong>7 ms</strong></td>
+        <td>El coste de un lookup no es el DHT, es construir el circuito por el que viaja.</td></tr>
+    <tr><td>Página con 20 recursos</td><td><strong>129 ms</strong></td>
+        <td>La multiplexación de streams ya colapsa la página en un solo encuentro.</td></tr>
+    <tr><td>RAM de un relevo ocioso</td><td><strong>43 MiB</strong></td>
+        <td>Cabe en una Raspberry Pi sin pensarlo.</td></tr>
+    <tr><td>RAM de un nodo completo</td><td><strong>55 MiB</strong></td>
+        <td>~15 KiB por circuito servido; ~51 MiB en el tope de 512.</td></tr>
+  </tbody>
+</table>
+
+<div class="card ok">
+  <h3>La regla que salió de equivocarse tres veces</h3>
+  <p>Las puertas de rendimiento se expresan <strong>relativas a un techo medido</strong>, nunca en
+  cifras absolutas. Y su reverso, que costó un CI en rojo: <strong>si un test puede fallar porque
+  la máquina fue más rápida de lo previsto, no está midiendo lo que afirma</strong>.</p>
+</div>
+
+<footer>
+  <p>Servido por una celda Nullcell a través de un circuito de seis saltos. Sin dominio, sin IP
+  pública, sin certificado y sin una sola petición a internet: ni tipografías, ni CDN, ni analítica.
+  Si esta página se ve, es que la red funciona.</p>
+  <p>Código: <code>github.com/ArchelKrozt/nullcell</code> · AGPL-3.0</p>
+</footer>
+
+</div>
+</body>
+</html>

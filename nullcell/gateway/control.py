@@ -63,9 +63,13 @@ class ControlError(Exception):
 class ControlPanel:
     """What a running cell lets its own panel do, and remember."""
 
-    def __init__(self, runtime: Any, *, home: Path | None = None) -> None:
+    def __init__(self, runtime: Any, *, home: Path | None = None, deployment: Any = None) -> None:
         self.runtime = runtime
         self.home = Path(home) if home else Path.home() / ".nullcell"
+        #: A portable deployment folder, if one was given. When present it is
+        #: the source of truth instead of `~/.nullcell/desktop.json`, which is
+        #: what makes a move to another machine a copy rather than a rebuild.
+        self.deployment = deployment
         self.state_path = self.home / "desktop.json"
 
         self._relay_task: Any = None
@@ -90,6 +94,9 @@ class ControlPanel:
         writing them down would mean restoring a view of the network that was
         true once.
         """
+        if self.deployment is not None:
+            self._remember_in_deployment()
+            return
         wish = {
             "sharing": self.wants_sharing,
             "portal": (
@@ -104,9 +111,55 @@ class ControlPanel:
         except OSError as exc:
             log.warning("no se pudo guardar %s: %s", self.state_path, exc)
 
+    def _remember_in_deployment(self) -> None:
+        """Write the wishes back into the portable folder."""
+        import os
+
+        from nullcell.host.deployment import Portal
+
+        deployment = self.deployment
+        deployment.sharing = self.wants_sharing
+        if self.portal is None:
+            deployment.portals = []
+        else:
+            folder = Path(self.portal["folder"])
+            # Relative to the deployment, `..` included. `Path.relative_to`
+            # refuses to walk upwards, so it turned a hand-written
+            # `../null-mi-web` into an absolute path on the first save — which
+            # is precisely the thing `warnings()` tells people not to write,
+            # written by the program itself.
+            try:
+                stored = os.path.relpath(folder, deployment.root)
+            except ValueError:  # otra unidad en Windows
+                stored = str(folder)
+
+            # Keep whatever the file already said. A save that only knows the
+            # folder and the name must not delete the title, the description
+            # and the tags: an update that does not carry a field is not an
+            # instruction to erase it.
+            previous = next(
+                (
+                    q
+                    for q in deployment.portals
+                    if deployment.folder_for(q).resolve() == folder.resolve()
+                ),
+                None,
+            )
+            portal = previous or Portal(folder=stored)
+            portal.folder = stored
+            portal.name = self.portal.get("name") or (previous.name if previous else None)
+            deployment.portals = [portal]
+        try:
+            deployment.save()
+        except OSError as exc:
+            log.warning("no se pudo guardar %s: %s", deployment.config_path, exc)
+
     async def restore(self) -> None:
         """Pick the intents back up. Never fatal: a bad file is not a reason
         to refuse to start, it is a reason to start empty and say so."""
+        if self.deployment is not None:
+            await self._restore_from_deployment()
+            return
         try:
             wish = json.loads(self.state_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -121,6 +174,19 @@ class ControlPanel:
         if isinstance(portal, dict) and portal.get("folder"):
             with contextlib.suppress(ControlError):
                 await self.publish_folder(portal["folder"], name=portal.get("name"), save=False)
+
+    async def _restore_from_deployment(self) -> None:
+        deployment = self.deployment
+        for warning in deployment.warnings():
+            log.warning("%s", warning)
+            self._last_error = warning
+        self.wants_sharing = bool(deployment.sharing)
+        for portal in deployment.portals:
+            with contextlib.suppress(ControlError):
+                await self.publish_folder(
+                    deployment.folder_for(portal), name=portal.name, save=False
+                )
+            break  # one cell, one address, one portal (§3)
 
     # ------------------------------------------------------------ bandwidth
     @property

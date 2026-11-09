@@ -219,6 +219,41 @@ sigue existiendo para quien prefiera Firefox vía SOCKS.
 > **PySide6 va fijada en 6.11.3 a propósito:** Qt dejó de publicar QtWebEngine para macOS en la
 > 6.12, así que una versión más nueva instala un escritorio sin navegador.
 
+## Publicar un portal con nombre, y mudarlo después
+
+Todo lo que define tu presencia en la red cabe en una carpeta, para que mudarse a una Raspberry Pi
+sea copiar y no reconstruir:
+
+```
+null-despliegue/
+  nullcell.json     qué portales publicar y con qué nombre
+  identity.key      (opcional) la identidad de esta celda
+```
+
+```bash
+ncell desktop --config ./null-despliegue
+```
+
+Hay un ejemplo completo en [`null-despliegue/`](null-despliegue/), que publica
+[`null-mi-web/`](null-mi-web/) —la documentación del proyecto, servida por la propia red— bajo el
+nombre `nullcell.null`.
+
+> **La dirección *es* la clave.** `nullcell.null` no es un dominio que alguien te alquile: es un
+> nombre en el DHT atado a una clave Ed25519, y la dirección de 56 caracteres del portal **es esa
+> clave** (§3). Si copias la carpeta a otra máquina **sin `identity.key`**, allí arranca una celda
+> distinta con otra dirección, y el nombre sigue apuntando a la vieja hasta que caduque. El
+> programa avisa.
+
+### Qué ve alguien si apagas la máquina
+
+El nombre no se pierde: el registro `NAME` sigue apuntando a tu clave. Lo que caduca —en una hora—
+es el *descriptor*, que dice por dónde alcanzarte. Quien visite verá **«el portal existe, pero está
+apagado»**, no un error genérico y no «no existe». Al encender vuelve solo.
+
+Son estados que se parecen desde fuera y significan cosas opuestas —uno no hay que esperarlo, el
+otro vuelve por sí mismo— así que el navegador los distingue en lugar de decir «no se pudo cargar
+la página».
+
 ## Entrar sólo a navegar, sin aportar un relevo
 
 Navegar y prestar ancho de banda son **comandos distintos**, y el primero no necesita nada del

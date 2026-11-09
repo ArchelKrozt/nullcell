@@ -694,6 +694,14 @@ def cmd_desktop(
     seed: Annotated[list[str] | None, typer.Option("--seed", help="<nid>@host:puerto")] = None,
     hud_port: Annotated[int, typer.Option("--hud-port")] = 9180,
     lan: Annotated[bool, typer.Option("--lan", help="baliza multicast en la LAN")] = False,
+    config: Annotated[
+        str | None,
+        typer.Option(
+            "--config",
+            "-c",
+            help="carpeta de despliegue portátil: portales, nombres e identidad",
+        ),
+    ] = None,
     log_level: Annotated[str, typer.Option("--log-level")] = "warning",
 ) -> None:
     """Icono en la barra de menús, panel con interruptores y navegador (§9).
@@ -721,6 +729,7 @@ def cmd_desktop(
             seeds=_seeds(seed),
             hud_port=hud_port,
             lan=lan,
+            config=config,
         )
     )
 
