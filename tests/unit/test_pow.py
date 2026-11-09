@@ -65,30 +65,63 @@ def test_difficulty_table_covers_every_record_type():
     assert P.DIFFICULTY["name"] > P.DIFFICULTY["keyword"] > P.DIFFICULTY["relay"]
 
 
-async def test_solve_async_does_not_block_the_event_loop():
-    """§16: 400 ms of frozen loop drops live circuits."""
+async def test_solve_async_runs_off_the_event_loop_thread(monkeypatch):
+    """§16: 400 ms of frozen loop drops live circuits.
+
+    Asserted on *where the work runs*, not on how long the loop was quiet.
+    The first version of this test ran a heartbeat every 10 ms and required
+    at least one sample, and CI failed it on Python 3.12 with "heartbeat never
+    ran" — because the runner solved 10 bits in under 10 ms. The best possible
+    outcome was being reported as the failure, and the test got less reliable
+    the faster the machine. Thread identity gives the same guarantee and does
+    not race.
+    """
+    import threading
+
+    real_solve = P.solve
+    threads: list[int] = []
+
+    def spy(*args, **kwargs):
+        threads.append(threading.get_ident())
+        return real_solve(*args, **kwargs)
+
+    monkeypatch.setattr(P, "solve", spy)
+
+    nonce = await P.solve_async(b"reto-async", 10)
+
+    P.verify(b"reto-async", nonce, 10)
+    assert threads, "solve was never called"
+    assert threading.get_ident() not in threads, "the search ran on the event loop thread"
+    assert len(set(threads)) > 1 or P.WORKERS == 1, "the search was not spread across workers"
+
+
+async def test_the_loop_keeps_breathing_during_a_long_solve():
+    """The other half, measured — but only where there is something to
+    measure. A solve that finishes between two ticks proves nothing either
+    way, so the samples are checked and an empty run is not a verdict.
+    """
     import asyncio
     import time
 
-    delays: list[float] = []
+    gaps: list[float] = []
     running = True
 
     async def heartbeat():
         while running:
             t0 = time.perf_counter()
-            await asyncio.sleep(0.01)
-            delays.append((time.perf_counter() - t0 - 0.01) * 1000)
+            await asyncio.sleep(0)
+            gaps.append((time.perf_counter() - t0) * 1000)
 
     beat = asyncio.create_task(heartbeat())
     try:
-        nonce = await P.solve_async(b"reto-async", 10)
+        nonce = await P.solve_async(b"reto-largo", 14)
     finally:
         running = False
         beat.cancel()
 
-    P.verify(b"reto-async", nonce, 10)
-    assert delays, "heartbeat never ran"
-    assert max(delays) < 50, f"event loop stalled {max(delays):.0f} ms (budget 50 ms)"
+    P.verify(b"reto-largo", nonce, 14)
+    assert gaps, "the loop never got control back at all"
+    assert max(gaps) < 50, f"event loop stalled {max(gaps):.0f} ms (budget 50 ms)"
 
 
 async def test_pool_can_be_shut_down_and_reused():

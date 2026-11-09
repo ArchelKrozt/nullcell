@@ -1378,6 +1378,21 @@ limitará el enlace más lento (~21 MB/s), no la suma de tres en un núcleo.
 simulada en un proceso mide la simulación. Las puertas de rendimiento de este proyecto se expresan
 **relativas a un techo medido**, no en cifras absolutas.
 
+> **Y la tercera vez, en M8, con la variante inversa: un test que falla porque la máquina es
+> rápida.** El CI rechazó `test_solve_async_does_not_block_the_event_loop` en Python 3.12 con
+> «heartbeat never ran». El test lanzaba un latido cada 10 ms durante el PoW y exigía al menos una
+> muestra; el runner resolvió 10 bits en menos de 10 ms, así que no hubo ninguna. **El mejor
+> resultado posible se reportaba como fallo**, y el test se volvía menos fiable cuanto más rápida
+> era la máquina —justo al revés de lo que uno espera de un test de rendimiento.
+>
+> La corrección no es subir el umbral: es dejar de medir el tiempo para afirmar la propiedad.
+> Lo que §16 necesita garantizar es **dónde corre el trabajo**, no cuánto calló el bucle, y la
+> identidad del hilo lo dice sin carrera posible. La medición temporal sigue existiendo en un
+> segundo test, con `sleep(0)` y 14 bits, donde una ejecución sin muestras ya no es un veredicto.
+>
+> La regla general, que es la misma de arriba vista del otro lado: **si un test puede fallar
+> porque el sistema fue más rápido de lo previsto, no está midiendo la propiedad que afirma.**
+
 Por el camino, escribir §5 destapó dos asignaciones por marco en mi propia ruta caliente: el digest
 se calculaba sobre una **copia de 507 bytes** con el campo a cero, y el tag se escribía con otra
 copia. Las dos eliminadas —el digest se alimenta en tres trozos de un `memoryview`, el tag se
