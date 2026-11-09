@@ -71,9 +71,14 @@ class LocalUI:
         host: str = "127.0.0.1",
         port: int = DEFAULT_PORT,
         token: str | None = None,
+        search: object = None,
     ) -> None:
         self.snapshot = snapshot
         self.bus = bus
+        #: A :class:`~nullcell.search.query.Search`, if this node has one. The
+        #: HUD is also el Oráculo (§9), so the search box is part of the panel
+        #: rather than a separate page.
+        self.search = search
         self.host = host
         self.port = port
         self.token = token or secrets.token_urlsafe(32)
@@ -154,6 +159,61 @@ class LocalUI:
     async def _state(self, request: web.Request) -> web.StreamResponse:
         return web.json_response({"state": self.snapshot(), "events": self.bus.recent(100)})
 
+    async def _search(self, request: web.Request) -> web.StreamResponse:
+        """Run a query (§8) and answer with results and their explanations.
+
+        Every score comes back **broken into parts** (§8's ranking), because
+        §9 forbids the interface from inventing metrics and one opaque number
+        is how a ranking stops being explainable.
+        """
+        if self.search is None:
+            return web.json_response({"error": "este nodo no tiene índice"}, status=503)
+        query = (request.query.get("q") or "").strip()
+        if not query:
+            return web.json_response({"query": "", "results": [], "progress": ""})
+
+        progress: list[str] = []
+        results = await self.search.run(query, on_progress=lambda p: progress.append(p.describe()))
+        return web.json_response(
+            {
+                "query": query,
+                "progress": progress[-1] if progress else "",
+                "results": [
+                    {
+                        "nid": ranked.hit.nid,
+                        "kind": ranked.hit.kind,
+                        "title": ranked.hit.title,
+                        "desc": ranked.hit.descr,
+                        "tags": ranked.hit.tags,
+                        "age": round(ranked.hit.age),
+                        "confirmed": ranked.hit.confirmed,
+                        "score": round(ranked.score, 3),
+                        "why": ranked.explain(),
+                    }
+                    for ranked in results
+                ],
+            }
+        )
+
+    async def _sigils(self, request: web.Request) -> web.StreamResponse:
+        """Every known portal's seal, in one sprite (§9, §16).
+
+        Generated locally from ``sha256(nid)``: no request leaves this machine
+        to draw them, which is the whole reason §9 refuses remote favicons.
+        """
+        from nullcell.gateway.sigil import sprite
+
+        state = self.snapshot()
+        nids = [portal["nid"] for portal in state.get("portals", []) if portal.get("nid")]
+        nids += [
+            circuit_hop for c in state.get("circuits", []) for circuit_hop in c.get("hops", [])
+        ]
+        return web.Response(
+            body=sprite(sorted(set(nids))).encode("utf-8"),
+            content_type="image/svg+xml",
+            charset="utf-8",
+        )
+
     async def _ws(self, request: web.Request) -> web.StreamResponse:
         socket = web.WebSocketResponse(heartbeat=30.0)
         await socket.prepare(request)
@@ -196,6 +256,8 @@ class LocalUI:
                 web.get("/", self._index),
                 web.get("/static/{name}", self._static),
                 web.get("/api/state", self._state),
+                web.get("/api/search", self._search),
+                web.get("/api/sigils.svg", self._sigils),
                 web.get("/ws", self._ws),
             ]
         )

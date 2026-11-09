@@ -301,7 +301,11 @@ def cmd_node(
             from nullcell.gateway.localui import LocalUI
 
             bus = EventBus()
-            local_ui = LocalUI(runtime.status, bus, port=hud_port)
+            # The HUD is also el Oráculo (§9), so it needs the index.
+            runtime.open_index()
+            await runtime.refresh_portals()
+            runtime.spawn(runtime.keep_portals_fresh())
+            local_ui = LocalUI(runtime.status, bus, port=hud_port, search=runtime.search)
             url = await local_ui.start()
             bus.emit("node.up", f"{identity.short} escuchando en [{host}]:{port}")
             typer.secho(f"  HUD: {url}", fg=typer.colors.CYAN)

@@ -113,11 +113,48 @@ async def test_reserved_names_are_declared():
 
 
 # ------------------------------------------------------------- §9 frontend rules
+#: The SVG namespace is an *identifier*, not a resource: no browser ever
+#: fetches it, and `createElementNS` needs it literally. Allowlisted by exact
+#: string so it cannot widen into a loophole for anything else.
+_SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+
+
+def _external_urls(text: str) -> list[str]:
+    """Every URL in *text* that a browser could actually fetch.
+
+    Compared to the allowlist by **exact equality**, not by stripping a prefix:
+    ``http://www.w3.org/2000/svg2/evil.example/x.png`` starts with the allowed
+    namespace and is a completely different URL, and a prefix-stripping check
+    let it through.
+    """
+    urls = re.findall(r"https?://[^\s\"'()<>]*", text)
+    urls += re.findall(r"(?<![:\w])//[^\s\"'()<>]+", text)
+    return [url for url in urls if url != _SVG_NAMESPACE]
+
+
 def test_the_hud_makes_no_external_requests():
-    pattern = re.compile(r"https?://|//cdn|fonts\.googleapis|unpkg|jsdelivr")
+    """§9: one <link> to a CDN would tell the ordinary internet a node is here."""
     for path in HUD_ROOT.iterdir():
-        text = path.read_text(encoding="utf-8")
-        assert not pattern.search(text), f"{path.name} reaches outside"
+        found = _external_urls(path.read_text(encoding="utf-8"))
+        assert not found, f"{path.name} reaches outside: {found}"
+
+
+@pytest.mark.parametrize(
+    "sneaky",
+    [
+        '<script src="https://cdn.example/x.js">',
+        '<link href="http://fonts.googleapis.com/css">',
+        '<img src="//cdn.example/pixel.png">',
+        f'<img src="{_SVG_NAMESPACE}2/evil.example/x.png">',  # namespace-ish prefix
+    ],
+)
+def test_the_allowlist_does_not_hide_a_real_url(sneaky):
+    """The allowlist is one exact string and must not widen into a loophole."""
+    assert _external_urls(sneaky), f"an external URL slipped past the check: {sneaky}"
+
+
+def test_the_svg_namespace_itself_is_allowed():
+    assert _external_urls(f'<svg xmlns="{_SVG_NAMESPACE}">') == []
 
 
 def test_colours_live_only_in_root_tokens():

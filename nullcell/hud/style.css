@@ -134,3 +134,72 @@ main {
   :root { --glow: none; }
   body { background: var(--bg); }
 }
+
+/* ---- §9: buscador, portales, topología. Todo con los tokens de :root ---- */
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.search .glyph { color: var(--accent-data); }
+.search input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  padding: 4px 8px;
+}
+.search input:focus-visible {
+  outline: none;
+  border-color: var(--accent-data);
+  box-shadow: var(--glow);
+}
+.small { font-size: 11px; }
+
+.result { border-left: 2px solid var(--border); padding-left: 10px; }
+.result .head { display: flex; gap: 8px; align-items: baseline; }
+.result .title { color: var(--text); }
+.result .kind {
+  color: var(--accent-data);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 5px;
+  font-size: 10px;
+}
+.result .score { margin-left: auto; color: var(--text-dim); }
+.result .why { color: var(--text-dim); font-size: 11px; }
+.result .addr { color: var(--text-dim); font-size: 11px; overflow-wrap: anywhere; }
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+  content-visibility: auto;          /* §16: 200+ tarjetas sin quemar CPU */
+  contain-intrinsic-size: 200px;
+}
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+  background: var(--surface-2);
+  min-width: 0;
+}
+.card .seal { width: 36px; height: 36px; display: block; margin-bottom: 4px; }
+.card .name { color: var(--text); overflow-wrap: anywhere; }
+.card .meta { color: var(--text-dim); font-size: 11px; }
+.card[data-stale="true"] { border-color: var(--accent-alert); }
+
+.topology { display: flex; flex-direction: column; gap: 6px; }
+.bars { display: flex; align-items: flex-end; gap: 2px; height: 56px; }
+.bars .bar {
+  flex: 1;
+  min-width: 2px;
+  background: var(--accent-data);
+  opacity: .8;
+}

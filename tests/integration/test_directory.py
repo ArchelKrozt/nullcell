@@ -397,8 +397,12 @@ async def test_panaderia_null_serves_a_page_end_to_end(tmp_path):
             # Real relays live on loopback in this test, so the hops the
             # builder chose are mapped back to reachable endpoints. The
             # *choice* is the builder's, which is what is under test.
+            # Both paths come from the builder, including the one that has to
+            # end at a specific relay. Assembling that one by hand is how this
+            # test first produced a circuit with a repeated hop — exactly the
+            # mistake PathBuilder exists to prevent.
             rendezvous_path = _reachable(builder.build(), cells)
-            intro_path = [*_reachable(builder.build(), cells)[:2], intro.as_hop()]
+            intro_path = _reachable(builder.build(ending_at=intro.as_hop()), cells)
             chosen_paths.extend([rendezvous_path, intro_path])
             return await connect_to_service(
                 client_manager,

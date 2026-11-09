@@ -516,6 +516,22 @@ forwarding.
 **Ranking:** BM25 × uptime observado × nº de nodos que confirman el descriptor × endosos firmados
 de nodos en los que *tú* confías (web of trust personal, sin autoridad global).
 
+> **Construido en M7, con una corrección a la fórmula.** §8 la escribe como un **producto**, y
+> BM25 devuelve ≈0 para una palabra que aparece en todos los documentos — que en una red de una
+> docena de portales **es la mayoría de las palabras**. Usada tal cual, una relevancia casi nula
+> aniquilaba frescura, confirmaciones y endosos por igual, y todos los resultados puntuaban lo
+> mismo. La relevancia es ahora un **bono sobre 1.0**, así que el texto ordena cuando tiene algo
+> que decir y los otros tres factores deciden cuando no.
+>
+> Dos topes más, por §10: las confirmaciones **saturan a 10** —si no, un enjambre Sybil pone
+> cualquier cosa primera confirmándola mil veces— y los endosos cuentan **solo de celdas que este
+> usuario eligió**, así que dos personas buscando lo mismo pueden obtener órdenes distintos. Eso
+> es el diseño, no un defecto.
+>
+> Y la puntuación se devuelve **descompuesta en sus partes**, no como un número. §9 prohíbe que la
+> interfaz invente métricas, y un score opaco es exactamente cómo un ranking deja de ser
+> explicable: el HUD dice *"relevancia 1.62 · confirmado por 7 celdas"*.
+
 **Prioridad entre los tres mecanismos — no están en pie de igualdad.** El **gossip (3) es el
 primario**: Bloom filters y deltas firmados son lo que permite a un nodo nuevo heredar el
 conocimiento de la red en minutos. Rastrear portales por circuitos de 6 saltos (2) es lentísimo y
@@ -601,6 +617,14 @@ distintas no comparten sello — y encaja con la estética.
 
 Miniaturas reales: opcionales, solo en M8, traídas por circuito, **re-codificadas** en nuestro lado
 para eliminar metadatos y cargas maliciosas, servidas desde nuestro origen con CSP estricta.
+
+> **Construido en M7** (`gateway/sigil.py`). Hexágonos sobre una rejilla de 5×5, **espejados**
+> —la simetría es lo que hace que un sello se reconozca a 16 píxeles en lugar de leerse como
+> ruido—, con los colores tomados de los tokens del tema, así que una piel distinta reestiliza
+> todos los sellos. SVG puro sin script, y los tests lo afirman: dos claves nunca comparten sello,
+> no hay `<script>` ni `onload`, y no hay una sola URL dentro. Se sirven en **un sprite de
+> `<symbol>` referenciado con `<use>`** (§16), porque generar geometría en cada render es gratis
+> con diez portales y caro con quinientos.
 
 ### Reglas duras del HUD
 

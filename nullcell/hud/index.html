@@ -12,11 +12,22 @@
   <span class="sep">·</span>
   <span id="nid" class="mono dim">conectando…</span>
   <span class="grow"></span>
-  <span id="phase" class="pill">arrancando</span>
+  <span id="dht-mode" class="pill" title="§7, decisión 8">dht: —</span>
   <span id="circuits-count" class="pill">0 circuitos</span>
 </header>
 
+<form class="search" id="search-form" autocomplete="off">
+  <span class="glyph" aria-hidden="true">◈</span>
+  <input id="q" type="search" placeholder="buscar en la red…" aria-label="buscar en la red">
+  <span id="search-progress" class="dim small"></span>
+</form>
+
 <main>
+  <section class="panel" id="panel-results" hidden>
+    <h2>Resultados <span class="hint">§8 · relevancia × frescura × confirmaciones × endosos</span></h2>
+    <div id="results" class="list"></div>
+  </section>
+
   <section class="panel" id="panel-circuits">
     <h2>Circuitos <span class="hint">onion, 3 saltos (§5)</span></h2>
     <div id="circuits" class="list">
@@ -31,6 +42,20 @@
     </dl>
   </section>
 
+  <section class="panel" id="panel-portals">
+    <h2>Portales activos <span class="hint">frescura y confirmaciones, no uptime (§9)</span></h2>
+    <div id="portals" class="cards">
+      <p class="waiting">ningún portal conocido todavía — el gossip los rellena en minutos (§9)</p>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-topology">
+    <h2>Topología <span class="hint">grafo XOR, buckets de Kademlia (§7)</span></h2>
+    <div id="topology" class="topology">
+      <p class="waiting">sin tabla de rutas todavía</p>
+    </div>
+  </section>
+
   <section class="panel wide" id="panel-console">
     <h2>Consola <span class="hint">eventos en vivo por WebSocket · tope 500 líneas (§16)</span></h2>
     <div id="console" class="console" aria-live="polite"></div>
@@ -40,9 +65,10 @@
 <footer class="bar small">
   <span id="link" class="dim">desconectado</span>
   <span class="grow"></span>
-  <span class="dim">M3 · HUD de depuración · sin circuitos no hay anonimato de red</span>
+  <span class="dim">los sellos se generan aquí, de sha256(nid) — cero peticiones externas (§9)</span>
 </footer>
 
+<div id="sigils" aria-hidden="true"></div>
 <script src="/static/app.js"></script>
 </body>
 </html>

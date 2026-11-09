@@ -56,6 +56,9 @@ class Runtime:
     publisher: Publisher
     resolver: Resolver
     listener: Listener | None = None
+    indexer: object | None = None
+    search: object | None = None
+    _portals: list[dict] | None = None
     _tasks: list[asyncio.Task] = field(default_factory=list)
 
     # ------------------------------------------------------------------ build
@@ -128,6 +131,44 @@ class Runtime:
             except Exception as exc:
                 log.warning("relay discovery round failed: %s", exc)
 
+    def open_index(self) -> None:
+        """Attach the local full-text index and the search engine (§8)."""
+        from nullcell.search.indexer import Indexer
+        from nullcell.search.query import Search
+
+        indexer = Indexer(self.home / "index.db")
+        indexer.start()
+        self.indexer = indexer
+        self.search = Search(indexer, self.node)
+
+    async def refresh_portals(self) -> int:
+        """Re-read the index so the HUD's portal panel is current (§9)."""
+        if self.indexer is None:
+            return 0
+        hits = await self.indexer.recent(limit=64)
+        self._portals = [
+            {
+                "nid": hit.nid,
+                "kind": hit.kind,
+                "title": hit.title or hit.nid[:8],
+                "tags": hit.tags,
+                "age": round(hit.age),
+                "confirmed": hit.confirmed,
+            }
+            for hit in hits
+        ]
+        return len(self._portals)
+
+    async def keep_portals_fresh(self, interval: float = 15.0) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self.refresh_portals()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.debug("portal refresh failed: %s", exc)
+
     def spawn(self, coroutine) -> asyncio.Task:
         task = asyncio.create_task(coroutine)
         self._tasks.append(task)
@@ -143,6 +184,34 @@ class Runtime:
             x25519=x25519_public_bytes(self.identity.x25519_private),
             endpoints=list(self.node.endpoints),
         )
+
+    def topology(self) -> dict:
+        """Bucket occupancy of the Kademlia table (§9's topology panel).
+
+        Mostly empty near buckets is not a fault: bucket *i* covers
+        2^(255-i) of the keyspace, so the close ones stay empty until the
+        network is enormous (§7).
+        """
+        table = self.node.table
+        buckets = [len(bucket) for bucket in table._buckets]  # noqa: SLF001
+        used = [(index, count) for index, count in enumerate(buckets) if count]
+        return {
+            "cells": len(table),
+            "buckets_in_use": len(used),
+            "buckets": used[-24:],
+            "k": table.k,
+        }
+
+    def portals(self, limit: int = 24) -> list[dict]:
+        """Portals this cell knows about, with §9's liveness, not uptime.
+
+        §9 is explicit that the HUD must not invent metrics: this reports
+        *"visto hace 4 m, confirmado por 7 celdas"*, which is what we actually
+        know, and never a percentage nobody can verify.
+        """
+        if self._portals is None:
+            return []
+        return self._portals[:limit]
 
     def status(self) -> dict:
         """What the HUD shows (§9), from real sources only."""
@@ -167,6 +236,8 @@ class Runtime:
             "legs": len(self.relay.legs),
             "anonymous_dht": self.node.transport.anonymous,
             "circuits": circuits,
+            "portals": self.portals(),
+            "topology": self.topology(),
         }
 
     # --------------------------------------------------------------- teardown
@@ -180,3 +251,6 @@ class Runtime:
         await self.circuits.close()
         await self.relay.close()
         await self.node.close()
+        if self.indexer is not None:
+            self.indexer.close()
+            self.indexer = None
