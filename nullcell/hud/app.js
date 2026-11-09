@@ -138,6 +138,7 @@ function renderNode(state) {
     ["guards fijados", (state.guards || []).map(short).join(" ") || "ninguno"],
     ["registros en el DHT", state.records ?? "—"],
     ["circuitos servidos", state.legs ?? "—"],
+    ["observaciones firmadas", state.observations ?? "—"],
   ];
   dom.node.replaceChildren(
     ...rows.flatMap(([key, value]) => {
@@ -164,11 +165,16 @@ function renderPortals(portals) {
       card.dataset.stale = String((portal.age ?? 0) > FRESH_SECONDS);
       card.append(seal(portal.nid));
       card.append(span("name", portal.title || short(portal.nid)));
-      // §9: what we know, not a percentage nobody can verify.
+      // §9: what we know, not a percentage nobody can verify. When signed
+      // observations exist their wording wins, because that is evidence from
+      // other cells rather than a note we wrote to ourselves.
       card.append(
-        span("meta", `${portal.kind || "web"} · ~${ago(portal.age)} · ${portal.confirmed || 1}✓`),
+        span(
+          "meta",
+          `${portal.kind || "web"} · ~${ago(portal.age)} · ${portal.confirmed || 1}✓`,
+        ),
       );
-      card.title = portal.nid;
+      card.title = portal.seen ? `${portal.nid}\n${portal.seen}` : portal.nid;
       return card;
     }),
   );

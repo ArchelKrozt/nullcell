@@ -166,7 +166,7 @@ class Indexer:
         self,
         nid: str,
         *,
-        kind: str = "web",
+        kind: str = "",
         title: str = "",
         descr: str = "",
         tags: list[str] | None = None,
@@ -174,7 +174,14 @@ class Indexer:
         body: str = "",
         confirmed: int = 1,
     ) -> None:
-        """Queue a portal for the index. Returns immediately."""
+        """Queue a portal for the index. Returns immediately.
+
+        **Every argument is optional and omitting one leaves the stored value
+        alone.** Callers update partially: a gossip round carries only a
+        confirmation count, a crawl only a body, a resolved descriptor only
+        metadata. An unconditional overwrite erased the title and description
+        on the first gossip round and silently removed the portal from search.
+        """
         now = time.time()
         self._writes.put(
             (
@@ -183,8 +190,18 @@ class Indexer:
                     (nid, kind, title, descr, tags, lang, body, first_seen, last_seen, confirmed)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(nid) DO UPDATE SET
-                    kind=excluded.kind, title=excluded.title, descr=excluded.descr,
-                    tags=excluded.tags, lang=excluded.lang,
+                    -- Every field keeps its old value when the update does not
+                    -- carry one. This is a partial update by design: a gossip
+                    -- round knows a confirmation count and nothing else, and a
+                    -- crawl knows a body and nothing else. Overwriting
+                    -- unconditionally wiped the descriptor's title and
+                    -- description on the first gossip round, which also took
+                    -- the portal out of the search index.
+                    kind=CASE WHEN excluded.kind != '' THEN excluded.kind ELSE portals.kind END,
+                    title=CASE WHEN excluded.title != '' THEN excluded.title ELSE portals.title END,
+                    descr=CASE WHEN excluded.descr != '' THEN excluded.descr ELSE portals.descr END,
+                    tags=CASE WHEN excluded.tags != '' THEN excluded.tags ELSE portals.tags END,
+                    lang=CASE WHEN excluded.lang != '' THEN excluded.lang ELSE portals.lang END,
                     body=CASE WHEN excluded.body != '' THEN excluded.body ELSE portals.body END,
                     last_seen=excluded.last_seen,
                     confirmed=MAX(portals.confirmed, excluded.confirmed)
@@ -241,7 +258,7 @@ class Indexer:
         return [
             SearchHit(
                 nid=row["nid"],
-                kind=row["kind"],
+                kind=row["kind"] or "web",
                 title=row["title"],
                 descr=row["descr"],
                 tags=row["tags"].split() if row["tags"] else [],
@@ -275,7 +292,7 @@ class Indexer:
         return [
             SearchHit(
                 nid=row["nid"],
-                kind=row["kind"],
+                kind=row["kind"] or "web",
                 title=row["title"],
                 descr=row["descr"],
                 tags=row["tags"].split() if row["tags"] else [],

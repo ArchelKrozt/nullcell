@@ -252,3 +252,46 @@ async def test_resolving_a_portal_improves_later_searches(indexer):
     search.ingest(descriptor)
     await indexer.flush()
     assert [h.nid for h in await indexer.search("panaderia")] == [identity.nid]
+
+
+# ------------------------------------------- partial updates must not erase
+async def test_a_partial_update_keeps_what_it_does_not_carry(indexer):
+    """A gossip round knows a confirmation count and nothing else. Overwriting
+    unconditionally erased the title and description on the first round, and
+    silently took the portal out of search."""
+    nid = "a" * 56
+    indexer.upsert(nid, kind="web", title="La Panaderia", descr="Pan recien hecho", tags=["comida"])
+    await indexer.flush()
+
+    indexer.upsert(nid, confirmed=7)  # what gossip knows
+    await indexer.flush()
+
+    [hit] = await indexer.recent()
+    assert hit.title == "La Panaderia"
+    assert hit.descr == "Pan recien hecho"
+    assert hit.tags == ["comida"]
+    assert hit.kind == "web"
+    assert hit.confirmed == 7
+    assert [h.nid for h in await indexer.search("panaderia")] == [nid]
+
+
+async def test_a_crawl_adds_a_body_without_touching_metadata(indexer):
+    nid = "b" * 56
+    indexer.upsert(nid, title="Archivo", descr="Ficheros")
+    await indexer.flush()
+    indexer.upsert(nid, body="texto rastreado de la pagina")
+    await indexer.flush()
+
+    [hit] = await indexer.recent()
+    assert hit.title == "Archivo"
+    assert (await indexer.stats())["crawled"] == 1
+    assert [h.nid for h in await indexer.search("rastreado")] == [nid]
+
+
+async def test_confirmations_only_ever_rise(indexer):
+    nid = "c" * 56
+    indexer.upsert(nid, title="X", confirmed=9)
+    await indexer.flush()
+    indexer.upsert(nid, confirmed=2)
+    await indexer.flush()
+    assert (await indexer.recent())[0].confirmed == 9

@@ -510,6 +510,21 @@ forwarding.
    por cada palabra de título/desc/tags. Buscar = N lookups. Funciona desde el día 1, sin crawler.
 2. **FTS local:** SQLite **FTS5**. Un crawler educado (`robots.txt`, rate limit) recorre los
    servicios conocidos vía circuitos y guarda el texto → búsqueda instantánea y offline.
+
+   > **Construido en M7** (`search/crawler.py`, `host/robots.py`). El presupuesto de "educado",
+   > en números: **un portal a la vez**, **una petición cada 2 s** o lo que pida su `Crawl-delay`
+   > si pide más, techo de páginas y bytes por portal, y **solo mientras la celda está inactiva**
+   > — rastrear nunca debe competir con lo que el usuario está haciendo.
+   >
+   > Dos decisiones que van en favor del sitio, no nuestro: un `robots.txt` **ilegible o enorme
+   > se trata como "prohibido todo"**, no como permiso (un rastreador que lee una política
+   > malformada como consentimiento no es educado, es un rastreador con excusa); y un
+   > `robots.txt` **ausente** no es lo mismo, porque un sitio que nunca publicó política no ha
+   > prohibido nada (RFC 9309).
+   >
+   > Los enlaces absolutos se ignoran: un portal no puede mandar al rastreador a otro sitio. Y los
+   > `<script>` y `<style>` se eliminan **antes** que las etiquetas, para que una página no pueda
+   > rellenar el índice con su propio JavaScript.
 3. **Gossip de índices:** intercambio de Bloom filters + deltas firmados, para que un nodo nuevo
    herede el conocimiento de la red sin recrawlear todo.
 
@@ -601,6 +616,23 @@ Modelo elegido, de barato a caro:
 2. **Gossip de observaciones firmadas.** Un nodo que visitó un portal publica `{id, visto_en, ok}`
    firmado. El HUD muestra "visto hace 4 m · confirmado por 7 nodos". Es reputación distribuida,
    no una medición propia.
+
+   > **Construido en M7** (`search/gossip.py`), y resuelve a la vez el mecanismo 3 de §8. Dos
+   > detalles que decidieron el diseño:
+   >
+   > - **Una observación cuenta por observador, no por visita.** La clave de una observación es
+   >   `portal ‖ observador`, así que una celda que visita un portal mil veces aporta **una**
+   >   confirmación. Sin eso, "confirmado por 7 celdas" lo podría decir una sola celda insistente.
+   > - **La firma cubre al observador y la hora.** Así una observación no se puede reatribuir a
+   >   otra celda ni presentar una vieja como fresca. Lo que la firma **no** compra es veracidad:
+   >   cualquiera puede firmar que vio lo que quiera. Compra saber *quién* lo afirma, que es lo que
+   >   hace que contar observadores distintos signifique algo — y por eso el tope de §10 en el
+   >   ranking sigue siendo necesario contra un enjambre Sybil.
+   >
+   > El intercambio es **simétrico en un solo viaje**: se envía un Bloom filter de lo que ya se
+   > tiene y se reciben solo los deltas, en las dos direcciones a la vez. Sobre un circuito ese
+   > viaje cuesta 300-800 ms (§7), así que hacerlo simétrico abarata a la mitad mantenerse al día.
+   > El filtro de un peer se valida antes de usarlo: uno que declare 2^30 bits se rechaza.
 3. **Sondeo activo solo bajo demanda.** Si el usuario pulsa "comprobar", *ese* nodo abre un
    circuito. Nunca automático, nunca en bucle, con rate limit.
 

@@ -63,6 +63,9 @@ class KademliaNode:
         self.alpha = alpha
         self.k = k
         self._muxes: list[StreamMux] = []
+        #: A :class:`~nullcell.search.gossip.GossipService`, if this cell keeps
+        #: observations. Optional: a cell that only routes need not.
+        self.gossip = None
         self.stats = {"rpc_in": 0, "rpc_out": 0, "stored": 0, "rejected": 0}
 
     # ------------------------------------------------------------------ serving
@@ -109,6 +112,8 @@ class KademliaNode:
                 reply = self._on_find_value(message)
             elif op == proto.Op.STORE:
                 reply = self._on_store(message)
+            elif op == proto.Op.GOSSIP:
+                reply = self._on_gossip(message)
             else:
                 reply = {"err": f"unknown op: {op!r}"}
         except proto.ProtocolError as exc:
@@ -172,6 +177,30 @@ class KademliaNode:
             self.stats["stored"] += 1
         return {"ok": 1, **self._me(), "stored": bool(stored)}
 
+    def _on_gossip(self, message: dict[str, Any]) -> dict[str, Any]:
+        """Exchange observations with a peer (§8, §9).
+
+        Both directions in one round trip: we take what they sent and answer
+        with what their filter says they lack. Over a circuit that round trip
+        costs 300-800 ms, so making it symmetric halves the cost of staying
+        current.
+        """
+        self._learn(message)
+        if self.gossip is None:
+            return {"err": "this cell does not gossip"}
+
+        from nullcell.search.gossip import BloomFilter
+
+        kept = self.gossip.ingest(self.gossip.decode_observations(message.get("obs")))
+        peer_bloom = BloomFilter.from_dict(message.get("bloom"))
+        return {
+            "ok": 1,
+            **self._me(),
+            "accepted": kept,
+            "obs": [o.as_dict() for o in self.gossip.deltas(peer_bloom)],
+            "bloom": self.gossip.digest().as_dict(),
+        }
+
     # ------------------------------------------------------------------ calling
     async def _rpc(self, node: Node, message: dict[str, Any]) -> dict[str, Any] | None:
         """One request. Returns None and penalises the node on failure."""
@@ -194,6 +223,22 @@ class KademliaNode:
 
     async def ping(self, node: Node) -> bool:
         return await self._rpc(node, {"op": proto.Op.PING}) is not None
+
+    async def exchange_gossip(self, node: Node) -> int:
+        """One gossip round with *node*. Returns how many observations we kept."""
+        if self.gossip is None:
+            return 0
+        reply = await self._rpc(
+            node,
+            {
+                "op": proto.Op.GOSSIP,
+                "bloom": self.gossip.digest().as_dict(),
+                "obs": [o.as_dict() for o in self.gossip.deltas(None, limit=16)],
+            },
+        )
+        if reply is None:
+            return 0
+        return self.gossip.ingest(self.gossip.decode_observations(reply.get("obs")))
 
     # --------------------------------------------------------- iterative lookup
     async def _lookup(self, target: bytes, *, want_value: bool) -> tuple[list[Node], list[bytes]]:

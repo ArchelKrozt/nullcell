@@ -3,10 +3,10 @@
 Red P2P cifrada y anónima: circuitos onion de 3 saltos sobre QUIC, sin autoridades de directorio.
 Direcciones `.null` autocertificadas. Python 3.11+, sin root.
 
-**Estado: M6.** `https://panaderia.null` funciona: un cliente que conoce **solo un nombre** lo
-resuelve en el DHT, elige sus propios circuitos con guards fijados y diversidad de prefijos, y
-carga la página sobre 6 saltos. El portal no tiene IP pública, ni UPnP, ni un solo puerto abierto.
-Nada se pasa de mano en mano.
+**Estado: M7.** `https://panaderia.null` funciona conociendo solo el nombre, y el HUD local es
+también el buscador: portales con sus sellos criptográficos, topología del DHT, y búsqueda cuyo
+orden **se explica** en lugar de darte un número opaco. El portal no tiene IP pública, ni UPnP, ni
+un solo puerto abierto.
 
 > ### ⚠ Qué está verificado y qué sigue abierto
 >
@@ -134,8 +134,10 @@ NULLCELL_HOME=/tmp/b ncell ping <NID-de-a> --addr 127.0.0.1:4455
 | Nombres legibles resueltos en el DHT, alias locales, nombres reservados (§8, §9) | ✅ |
 | Selección de ruta de §7 en uso real: un solo sitio elige saltos | ✅ |
 | HTTP/2 hacia el navegador (§16, táctica 7) | ❌ — reclasificada, ver §16 |
-| Buscador: índice, crawler, gossip, ranking (§8) | ❌ M7 |
-| HUD completo: portales, topología, sellos (§9) | ❌ M7 |
+| Buscador: índice FTS5, lookups DHT concurrentes, ranking explicable (§8) | ✅ |
+| Gossip de observaciones firmadas con Bloom filters (§8, §9) | ✅ |
+| Crawler educado sobre circuitos, `robots.txt` obligatorio (§8) | ✅ |
+| HUD completo: portales con sellos, topología, buscador (§9) | ✅ |
 | Relleno `PADDING` (§5) | ❌ — la mitigación de §10 contra análisis de tráfico no existe aún |
 | Diversidad por ASN (§7) | ❌ — ver §7, el motivo está documentado |
 | L2b rendezvous, intro points (§6) | ❌ M4 |

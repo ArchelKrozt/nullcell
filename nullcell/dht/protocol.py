@@ -30,6 +30,10 @@ class Op(StrEnum):
     FIND_NODE = "find_node"
     FIND_VALUE = "find_value"
     STORE = "store"
+    #: §8 mechanism 3 and §9's liveness: exchange Bloom filters of known
+    #: observations and send back only the deltas, so a new cell inherits what
+    #: the network knows instead of recrawling it.
+    GOSSIP = "gossip"
 
 
 class ProtocolError(Exception):

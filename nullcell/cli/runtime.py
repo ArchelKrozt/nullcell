@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
@@ -58,6 +59,8 @@ class Runtime:
     listener: Listener | None = None
     indexer: object | None = None
     search: object | None = None
+    gossip: object | None = None
+    crawler: object | None = None
     _portals: list[dict] | None = None
     _tasks: list[asyncio.Task] = field(default_factory=list)
 
@@ -132,7 +135,8 @@ class Runtime:
                 log.warning("relay discovery round failed: %s", exc)
 
     def open_index(self) -> None:
-        """Attach the local full-text index and the search engine (§8)."""
+        """Attach the index, the search engine and the gossip service (§8, §9)."""
+        from nullcell.search.gossip import GossipService
         from nullcell.search.indexer import Indexer
         from nullcell.search.query import Search
 
@@ -140,23 +144,75 @@ class Runtime:
         indexer.start()
         self.indexer = indexer
         self.search = Search(indexer, self.node)
+        self.gossip = GossipService(self.identity, indexer=indexer)
+        # The DHT serves the gossip op from here, so a peer asking us gets
+        # answered from the same store the HUD reads.
+        self.node.gossip = self.gossip
+
+    async def gossip_round(self, limit: int = 4) -> int:
+        """Exchange observations with a few peers (§8 mechanism 3).
+
+        This is the mechanism §8 calls primary: a new cell fills its panel in
+        minutes from what the network already saw, instead of crawling six-hop
+        circuits for days.
+        """
+        if self.gossip is None:
+            return 0
+        kept = 0
+        for peer in self.node.table.closest(self.identity.routing_key, limit):
+            try:
+                kept += await self.node.exchange_gossip(peer)
+            except Exception as exc:
+                log.debug("gossip with %s failed: %s", peer.short, exc)
+        return kept
+
+    async def keep_gossiping(self, interval: float = 180.0) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                if self.gossip is not None:
+                    self.gossip.expire()
+                await self.gossip_round()
+                await self.refresh_portals()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("gossip round failed: %s", exc)
 
     async def refresh_portals(self) -> int:
         """Re-read the index so the HUD's portal panel is current (§9)."""
         if self.indexer is None:
             return 0
         hits = await self.indexer.recent(limit=64)
-        self._portals = [
-            {
+        portals = []
+        for hit in hits:
+            entry = {
                 "nid": hit.nid,
                 "kind": hit.kind,
                 "title": hit.title or hit.nid[:8],
                 "tags": hit.tags,
                 "age": round(hit.age),
                 "confirmed": hit.confirmed,
+                "seen": "",
             }
-            for hit in hits
-        ]
+            # §9's liveness, in order of cost: a signed observation from
+            # another cell beats our own index entry, because it is evidence
+            # from somebody else rather than a note to ourselves.
+            if self.gossip is not None:
+                try:
+                    pub = ids.decode_nid(hit.nid).pub
+                except ids.AddressError:
+                    pub = None
+                if pub is not None:
+                    confirmations = self.gossip.confirmations(pub)
+                    seen = self.gossip.last_seen(pub)
+                    if confirmations:
+                        entry["confirmed"] = confirmations
+                        entry["seen"] = self.gossip.describe(pub)
+                    if seen is not None:
+                        entry["age"] = max(0, round(time.time() - seen))
+            portals.append(entry)
+        self._portals = portals
         return len(self._portals)
 
     async def keep_portals_fresh(self, interval: float = 15.0) -> None:
@@ -238,6 +294,7 @@ class Runtime:
             "circuits": circuits,
             "portals": self.portals(),
             "topology": self.topology(),
+            "observations": len(self.gossip) if self.gossip is not None else 0,
         }
 
     # --------------------------------------------------------------- teardown

@@ -198,3 +198,89 @@ async def test_thirty_cells_find_each_other_and_route():
         found = await far.node.find_value(key)
         assert len(found) == 1
         assert found[0].pub == publisher.identity.public_key
+
+
+# ---------------------------------------------- gossip over real links (§8, §9)
+async def test_cells_exchange_signed_observations():
+    """§8 mechanism 3: a cell inherits what the network saw, over the wire.
+
+    Not a unit test of the service — this goes through the DHT op, so it
+    exercises the encoding, the Bloom filter on the wire and the verification
+    on arrival.
+    """
+    from nullcell.search.gossip import GossipService
+
+    async with mesh(4) as cells:
+        for cell in cells:
+            cell.node.gossip = GossipService(cell.identity)
+
+        portal = Identity.generate()
+        # Three cells each saw the portal; the fourth saw nothing.
+        for cell in cells[:3]:
+            cell.node.gossip.observe(portal.public_key)
+        newcomer = cells[3]
+        assert newcomer.node.gossip.confirmations(portal.public_key) == 0
+
+        for cell in cells[:3]:
+            await newcomer.node.exchange_gossip(cell.as_peer)
+
+        assert newcomer.node.gossip.confirmations(portal.public_key) == 3
+        described = newcomer.node.gossip.describe(portal.public_key)
+        assert "confirmado por 3 celdas" in described
+        assert "%" not in described
+
+
+async def test_an_exchange_is_symmetric():
+    """Both directions in one round trip, because over a circuit that trip
+    costs 300-800 ms (§7)."""
+    from nullcell.search.gossip import GossipService
+
+    async with mesh(2) as cells:
+        a, b = cells
+        for cell in cells:
+            cell.node.gossip = GossipService(cell.identity)
+
+        mine, theirs = Identity.generate(), Identity.generate()
+        a.node.gossip.observe(mine.public_key)
+        b.node.gossip.observe(theirs.public_key)
+
+        await a.node.exchange_gossip(b.as_peer)
+
+        assert a.node.gossip.confirmations(theirs.public_key) == 1
+        assert b.node.gossip.confirmations(mine.public_key) == 1
+
+
+async def test_a_cell_without_gossip_says_so_instead_of_crashing():
+    async with mesh(2) as cells:
+        from nullcell.search.gossip import GossipService
+
+        cells[0].node.gossip = GossipService(cells[0].identity)
+        assert cells[1].node.gossip is None
+        # The peer has no gossip service; the round simply yields nothing.
+        assert await cells[0].node.exchange_gossip(cells[1].as_peer) == 0
+
+
+async def test_a_forged_observation_does_not_survive_the_wire():
+    """Everything arriving is hostile input (§7)."""
+    import time as _time
+
+    from nullcell.search.gossip import GossipService, Observation
+
+    async with mesh(2) as cells:
+        liar, honest = cells
+        for cell in cells:
+            cell.node.gossip = GossipService(cell.identity)
+
+        portal, victim = Identity.generate(), Identity.generate()
+        forged = Observation(
+            portal=portal.public_key,
+            observer=victim.public_key,  # claiming to be a cell it is not
+            seen_at=int(_time.time()),
+            ok=True,
+            sig=b"\x00" * 64,
+        )
+        liar.node.gossip._observations[forged.key] = forged  # noqa: SLF001
+
+        await honest.node.exchange_gossip(liar.as_peer)
+        assert honest.node.gossip.confirmations(portal.public_key) == 0
+        assert honest.node.gossip.stats["rejected"] >= 1
