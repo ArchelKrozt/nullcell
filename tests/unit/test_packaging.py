@@ -20,6 +20,8 @@ import sys
 import tomllib
 from typing import Final
 
+import pytest
+
 ROOT: Final[pathlib.Path] = pathlib.Path(__file__).resolve().parents[2]
 PACKAGE: Final[pathlib.Path] = ROOT / "nullcell"
 
@@ -140,6 +142,10 @@ def test_the_package_has_no_import_time_side_effects():
         str(path.relative_to(ROOT)).removesuffix(".py").replace("/", ".")
         for path in PACKAGE.rglob("*.py")
         if path.name != "__init__.py"
+        # The optional extras are not installed in a plain `.[dev]` checkout,
+        # so importing them here would fail for the one reason that is not a
+        # bug. They get their own test below, skipped when absent.
+        and path.relative_to(PACKAGE).parts[0] not in _EXTRAS
     )
     script = "import " + ", ".join(modules)
     result = subprocess.run(
@@ -179,3 +185,29 @@ def test_the_interface_files_are_declared_as_package_data():
     for asset in assets:
         covered = any(fnmatch.fnmatch(asset, pattern) for pattern in patterns)
         assert covered, f"{asset} no lo cubre ningún patrón de package-data: {patterns}"
+
+
+def test_the_desktop_imports_cleanly_when_its_extra_is_installed():
+    """Checked where the engine exists, skipped where it does not.
+
+    The point is the same as the test above — a module that only fails on
+    import in production is the worst kind — but it cannot run in a checkout
+    that installed only `.[dev]`, and failing there would be reporting an
+    absent optional dependency as a defect.
+    """
+    import subprocess
+
+    pytest.importorskip("PySide6", reason="el extra [desktop] no está instalado")
+
+    modules = sorted(
+        str(path.relative_to(ROOT)).removesuffix(".py").replace("/", ".")
+        for path in (PACKAGE / "desktop").rglob("*.py")
+        if path.name != "__init__.py"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", "import " + ", ".join(modules)],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr

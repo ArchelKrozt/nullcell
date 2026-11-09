@@ -206,7 +206,8 @@ def test_the_installer_is_valid_shell():
 
 
 def test_the_compose_files_are_valid_yaml():
-    yaml = pytest.importorskip("yaml")
+    import yaml
+
     for relative in ("deploy/docker-compose.yml", "deploy/docker-compose.lab.yml"):
         data = yaml.safe_load((ROOT / relative).read_text(encoding="utf-8"))
         assert data["services"], f"{relative} declares no services"
