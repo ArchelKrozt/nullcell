@@ -67,13 +67,26 @@ class Listener:
         # (§5). Greeting first would have both ends open a stream of their own.
         return proto
 
-    async def start(self) -> None:
+    async def start(self) -> int:
+        """Bind and start accepting. Returns the port actually bound.
+
+        ``port=0`` asks the kernel for a free one and :attr:`port` is updated
+        to what it gave. That closes a race the test harness used to hit:
+        picking a port by binding a throwaway socket, closing it and then
+        binding for real leaves a window where somebody else takes it, and the
+        failure shows up much later as a connection that times out.
+        """
         self._server = await serve(
             self.host,
             self.port,
             configuration=server_configuration(self.identity),
             create_protocol=self._factory,
         )
+        transport = getattr(self._server, "_transport", None)
+        socket_object = transport.get_extra_info("socket") if transport is not None else None
+        if socket_object is not None:
+            self.port = socket_object.getsockname()[1]
+        return self.port
 
     def close(self) -> None:
         if self._server is not None:

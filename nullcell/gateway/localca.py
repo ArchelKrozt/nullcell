@@ -78,6 +78,27 @@ class LocalCA:
     def _load(self) -> None:
         self._key = load_pem_private_key(self.key_path.read_bytes(), password=None)  # type: ignore[assignment]
         self._cert = x509.load_pem_x509_certificate(self.cert_path.read_bytes())
+        if not self._usable(self._cert):
+            # A CA generated before the key identifiers were added cannot
+            # issue a certificate a modern verifier will accept, so it is
+            # replaced rather than left to fail at handshake time. Safe: this
+            # CA exists only inside the dedicated profile (§8). The operator
+            # has to re-import it, and is told so.
+            log.warning(
+                "the local CA predates the key identifiers modern TLS requires; "
+                "regenerating it. Re-import it into the browser profile: "
+                "ncell browse refreshes it"
+            )
+            self._create()
+
+    @staticmethod
+    def _usable(cert: x509.Certificate) -> bool:
+        """Does this CA carry what a current verifier demands?"""
+        try:
+            cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier)
+        except x509.ExtensionNotFound:
+            return False
+        return True
 
     def _create(self) -> None:
         key = ec.generate_private_key(ec.SECP256R1())
@@ -92,6 +113,15 @@ class LocalCA:
             .not_valid_before(now - dt.timedelta(minutes=5))
             .not_valid_after(now + dt.timedelta(days=CA_VALIDITY_DAYS))
             .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            # RFC 5280 says a conforming CA MUST include this, and modern
+            # OpenSSL **enforces** it: without the pair of SKI here and AKI on
+            # the issued certificate, verification fails with "Missing
+            # Authority Key Identifier". CI on Python 3.13 found it; a current
+            # Firefox would very likely have refused the same way, which would
+            # have broken the whole point of §8 on any up-to-date machine.
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False
+            )
             .add_extension(
                 x509.KeyUsage(
                     digital_signature=True,
@@ -187,6 +217,14 @@ class LocalCA:
             .add_extension(
                 x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
                 critical=False,
+            )
+            # The other half of the pair: it names which CA key signed this.
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(self._key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False
             )
             .sign(self._key, hashes.SHA256())
         )

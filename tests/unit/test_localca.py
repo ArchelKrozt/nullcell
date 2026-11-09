@@ -186,3 +186,75 @@ def test_every_documented_preference_is_present():
         "toolkit.telemetry.enabled",
     ):
         assert key in PREFS
+
+
+# ------------------------------- key identifiers: found by CI, not by me
+def test_the_ca_carries_a_subject_key_identifier(ca):
+    """RFC 5280 says a conforming CA MUST include it, and modern OpenSSL
+    **enforces** the pair: without it, verification fails with "Missing
+    Authority Key Identifier". CI on Python 3.13 found this; a current Firefox
+    would very likely have refused the same way, which would have broken the
+    whole point of §8 on any up-to-date machine."""
+    cert = x509.load_pem_x509_certificate(ca.certificate_pem)
+    identifier = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_KEY_IDENTIFIER).value
+    assert identifier.digest
+
+
+def test_a_site_certificate_names_the_ca_that_signed_it(ca, hostname):
+    cert = x509.load_pem_x509_certificate(ca.site_certificate(hostname)[0])
+    authority = cert.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_KEY_IDENTIFIER).value
+    ca_cert = x509.load_pem_x509_certificate(ca.certificate_pem)
+    subject = ca_cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_KEY_IDENTIFIER).value
+    assert authority.key_identifier == subject.digest
+
+
+def test_a_site_certificate_has_its_own_subject_key_identifier(ca, hostname):
+    cert = x509.load_pem_x509_certificate(ca.site_certificate(hostname)[0])
+    assert cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_KEY_IDENTIFIER).value
+
+
+def test_a_ca_predating_the_key_identifiers_is_regenerated(tmp_path, caplog):
+    """An operator who already ran an older build has a CA that cannot issue a
+    certificate a modern verifier accepts. It is replaced rather than left to
+    fail at handshake time."""
+    import datetime as dt
+    import logging
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+    )
+    from cryptography.x509.oid import NameOID
+
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Nullcell Local CA")])
+    now = dt.datetime.now(dt.UTC)
+    old = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - dt.timedelta(minutes=5))
+        .not_valid_after(now + dt.timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .sign(key, hashes.SHA256())  # no SubjectKeyIdentifier
+    )
+    (directory / "ca.key").write_bytes(
+        key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+    )
+    (directory / "ca.pem").write_bytes(old.public_bytes(Encoding.PEM))
+
+    authority = LocalCA(directory)
+    with caplog.at_level(logging.WARNING):
+        authority.load_or_create()
+
+    fresh = x509.load_pem_x509_certificate(authority.certificate_pem)
+    assert fresh.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_KEY_IDENTIFIER).value
+    assert fresh.serial_number != old.serial_number
+    assert any("regenerating" in record.message for record in caplog.records)

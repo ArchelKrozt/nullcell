@@ -66,10 +66,10 @@ class Cell:
     def __init__(self, index: int) -> None:
         self.identity = Identity.generate()
         self.static = X25519PrivateKey.generate()
-        self.port = _free_port()
+        self.port = 0  # the kernel picks it; start() reports it
         # Each cell in its own /16, so §7's diversity rule can be satisfied.
         self.endpoints = [f"127.0.0.1:{self.port}"]
-        self.prefix_hint = f"10.{index}.0.1:{self.port}"
+        self._index = index
         self.node = KademliaNode(self.identity, DirectTransport(), endpoints=self.endpoints)
         self.relay = RelayService(self.static, extend_timeout=5.0)
         rendezvous.install(self.relay, self.identity, dht=self.node)
@@ -80,9 +80,23 @@ class Cell:
         self.node.attach(link)
         self.relay.attach(link)
 
-    async def start(self) -> Cell:
-        await self.listener.start()
+    async def start(self):
+
+        self.port = await self.listener.start()
+        # Mutated in place, not rebound: KademliaNode and anything else built
+        # in __init__ holds a reference to *this list*, so assigning a new one
+        # left them advertising port 0 for ever — every connection to them
+        # then timed out, which showed up as a suite that got slower rather
+        # than as a failure.
+        self.endpoints[:] = [f"127.0.0.1:{self.port}"]
         return self
+
+    @property
+    def prefix_hint(self) -> str:
+        """A synthetic /16 so §7's diversity rule has something to work
+        with on a loopback-only network. A property, because the port is
+        not known until start()."""
+        return f"10.{self._index}.0.1:{self.port}"
 
     @property
     def peer(self) -> Node:
