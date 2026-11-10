@@ -95,6 +95,8 @@ class Socks5Proxy:
         self._sessions: dict[str, MultiplexedSession] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self.stats = {"accepted": 0, "opened": 0, "refused": 0, "sessions": 0}
+        #: Por qué falló el último intento de alcanzar un servicio.
+        self.last_refusal: str | None = None
 
     # -------------------------------------------------------------- lifecycle
     async def start(self) -> int:
@@ -152,7 +154,12 @@ class Socks5Proxy:
             session = await self._session_for(bare)
             stream = await session.open()
         except Exception as exc:
-            log.info("could not reach %s: %s", ids.short(bare), exc)
+            # Guardado además de registrado. El navegador sólo recibe «host
+            # unreachable», que es un número, y `log.info` se pierde en un
+            # proceso sin terminal: sin esto, la única pregunta que importa
+            # —*por qué* no se pudo llegar— no tiene dónde leerse.
+            self.last_refusal = f"{type(exc).__name__}: {exc}"
+            log.info("could not reach %s: %s", ids.short(bare), self.last_refusal)
             self.stats["refused"] += 1
             await self._reply(writer, _REPLY_HOST_UNREACHABLE)
             writer.close()

@@ -111,6 +111,8 @@ async def site(tmp_path: Path):
     try:
         assert await service.establish([[relays[0].hop, relays[1].hop, relays[2].hop]]) == 1
         await proxy.start()
+        global PROXY
+        PROXY = proxy
         yield service, proxy, ca, host
     finally:
         await proxy.close()
@@ -135,10 +137,17 @@ async def socks_connect(port: int, hostname: str, target_port: int):
     return reader, writer, reply[1]
 
 
+#: El proxy de la prueba en curso, para poder preguntarle por qué rechazó.
+PROXY: object | None = None
+
+
 async def fetch(port: int, hostname: str, ca: LocalCA, path: str = "/"):
     """SOCKS5, then TLS against the local CA, then HTTP/1.1."""
     reader, writer, code = await socks_connect(port, hostname, 443)
-    assert code == 0, f"SOCKS5 refused with {code}"
+    # El motivo, no sólo el número: un «refused with 4» tardó tres
+    # avistamientos en decir algo, porque el código SOCKS es el mismo para
+    # «no es una dirección» que para «no se pudo construir el circuito».
+    assert code == 0, f"SOCKS5 refused with {code}: {getattr(PROXY, 'last_refusal', None)}"
 
     with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as handle:
         handle.write(ca.certificate_pem)
