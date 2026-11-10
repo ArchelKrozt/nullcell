@@ -203,3 +203,26 @@ main {
   background: var(--accent-data);
   opacity: .8;
 }
+
+
+/* ------------------------------------------------------------- chat (M10) */
+.chat-join, .chat-say { display: flex; gap: 6px; margin-bottom: 8px; }
+.chat-join input, .chat-say input {
+  padding: 5px 8px; font-family: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.chat-join input { width: 10rem; }
+.chat-say input { flex: 1; min-width: 0; }
+.chat-join input:focus, .chat-say input:focus { outline: none; border-color: var(--accent-data); }
+.chat-join button, .chat-say button {
+  padding: 5px 11px; font-family: inherit; font-size: 12px; cursor: pointer;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.chat-join button:hover, .chat-say button:hover { border-color: var(--accent-data);
+                                                  color: var(--accent-data); }
+#chat-log { min-height: 8rem; max-height: 18rem; }
+.chat-line { display: flex; gap: 8px; }
+.chat-line .who { color: var(--accent-data); flex: none; }
+.chat-line.mine .who { color: var(--accent-alert); }
+.chat-line .what { word-break: break-word; }

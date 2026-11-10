@@ -56,6 +56,22 @@
     </div>
   </section>
 
+  <section class="panel wide" id="panel-chat">
+    <h2>chat</h2>
+    <form class="chat-join" id="chat-join" autocomplete="off">
+      <input id="chat-channel" type="text" placeholder="#general" aria-label="canal" value="#general">
+      <input id="chat-nick" type="text" placeholder="tu apodo" aria-label="apodo">
+      <button type="submit">entrar</button>
+    </form>
+    <p class="dim small" id="chat-status">sin canal</p>
+    <div id="chat-log" class="console" aria-live="polite"></div>
+    <form class="chat-say" id="chat-say" autocomplete="off" hidden>
+      <input id="chat-text" type="text" placeholder="escribe y pulsa enter" aria-label="mensaje"
+             maxlength="2000">
+      <button type="submit">enviar</button>
+    </form>
+  </section>
+
   <section class="panel wide" id="panel-console">
     <h2>Consola <span class="hint">eventos en vivo por WebSocket · tope 500 líneas (§16)</span></h2>
     <div id="console" class="console" aria-live="polite"></div>

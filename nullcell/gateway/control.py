@@ -43,6 +43,7 @@ from typing import Any, Final
 
 from nullcell.core import ids
 from nullcell.core import reach as reach_mod
+from nullcell.core.identity import Identity
 
 __all__ = ["Action", "ControlError", "ControlPanel"]
 
@@ -85,6 +86,11 @@ class ControlPanel:
         self._service: Any = None
         self._portal_task: Any = None
         self._last_error: str | None = None
+        #: El canal al que esta celda está unida, si lo está.
+        self.chat: Any = None
+        self.on_chat: Any = None
+        self._chat_identity: Any = None
+        self._chat_service_obj: Any = None
 
     # -------------------------------------------------------------- memoria
     def remember(self) -> None:
@@ -418,6 +424,18 @@ class ControlPanel:
             self._last_error = str(exc)
             log.debug("no se pudo activar el relevo todavía: %s", exc)
 
+        # §7, decisión 8: en cuanto haya rutas, el DHT deja de ir en claro.
+        # El escritorio construye su Runtime a mano, así que no pasaba por el
+        # `_runtime(anonymous=True)` de los comandos y se quedaba en directo
+        # para siempre — la misma decisión 8 sin conectar, por otro camino.
+        if self.runtime.paths.ready and not getattr(self.runtime, "anonymous", True):
+            with contextlib.suppress(Exception):
+                self.runtime.go_anonymous()
+
+        if self.chat is not None and self._chat_service_obj is None:
+            with contextlib.suppress(Exception):
+                await self._chat_service()
+
         if self.portal is None or self.portal["state"] == "en línea":
             return
         if not self.runtime.paths.ready:
@@ -475,6 +493,114 @@ class ControlPanel:
             await asyncio.sleep(RECONCILE_EVERY)
             with contextlib.suppress(Exception):
                 await self.reconcile()
+
+    # ------------------------------------------------------------- chat §M10
+    @property
+    def chat_identity(self) -> Any:
+        """La identidad del chat, **distinta** de la del nodo.
+
+        Separada a propósito: la pertenencia a un canal es pública (cualquiera
+        puede consultar su clave en el DHT), así que si el chat hablara con la
+        identidad del nodo, ver tu apodo en #general revelaría que eres quien
+        publica `nullcell.null`. Son dos cosas que no tienen por qué ir juntas.
+        """
+        if self._chat_identity is None:
+            from nullcell.chat import CHAT_IDENTITY_FILE
+
+            self.home.mkdir(parents=True, exist_ok=True)
+            self._chat_identity, _ = Identity.load_or_create(self.home / CHAT_IDENTITY_FILE)
+        return self._chat_identity
+
+    async def join(self, channel: str, nick: str = "") -> dict[str, Any]:
+        """Entra en un canal. Funciona sin red; hablar con otros, no."""
+        from nullcell.chat.channel import Channel
+        from nullcell.chat.protocol import MessageError
+
+        try:
+            if self.chat is not None:
+                await self.chat.close()
+            self.chat = Channel(
+                channel,
+                self.chat_identity,
+                nick=nick,
+                dht=self.runtime.node,
+                open_session=self._open_chat_session,
+            )
+        except MessageError as bad:
+            raise ControlError(str(bad)) from None
+
+        self.chat.on_message = self._on_chat_message
+        self.chat.spawn(self.runtime)
+        await self._chat_service()
+        return self.chat.describe()
+
+    async def _chat_service(self) -> None:
+        """Hace alcanzable el chat, si hay rutas. Si no, se reintenta solo."""
+        if self.chat is None or self._chat_service_obj is not None:
+            return
+        if not self.runtime.paths.ready:
+            return
+        from nullcell.onion.rendezvous_msgs import INTRO_POINTS
+        from nullcell.onion.service import HiddenService
+
+        service = HiddenService(self.chat_identity, self.runtime.circuits, multiplexed=True)
+        service.on_session = self._attach_chat_session
+        established = await service.establish(
+            [self.runtime.paths.build() for _ in range(INTRO_POINTS)]
+        )
+        if not established:
+            return
+        self._chat_service_obj = service
+        self.chat.service = service
+        await self.chat.refresh()
+
+    def _attach_chat_session(self, session: Any) -> None:
+        if self.chat is not None:
+            self.chat.attach(session)
+
+    async def _open_chat_session(self, member: Any) -> Any:
+        """Alcanza a otro miembro por su punto de enlace (§6)."""
+        from nullcell.onion.rendezvous_msgs import IntroPointRef
+        from nullcell.onion.service import connect_to_service
+
+        intro = next((ref for raw in member.intro if (ref := IntroPointRef.from_dict(raw))), None)
+        if intro is None:
+            raise ControlError(f"{member.nick} no publicó un punto de enlace usable")
+        return await connect_to_service(
+            self.runtime.circuits,
+            service_pub=member.pub,
+            service_x25519=member.x25519,
+            intro_point=intro,
+            rendezvous_path=self.runtime.paths.build(),
+            intro_path=self.runtime.paths.build(ending_at=intro.as_hop()),
+            multiplexed=True,
+        )
+
+    def _on_chat_message(self, message: Any) -> None:
+        if self.on_chat is not None:
+            self.on_chat(message)
+
+    async def say(self, text: str) -> dict[str, Any]:
+        from nullcell.chat.protocol import MessageError
+
+        if self.chat is None:
+            raise ControlError("todavía no estás en ningún canal")
+        try:
+            await self.chat.say(text)
+        except MessageError as bad:
+            raise ControlError(str(bad)) from None
+        return self.chat.describe()
+
+    def chat_state(self, limit: int = 100) -> dict[str, Any]:
+        if self.chat is None:
+            return {"channel": None, "messages": [], "members": [], "ready": False}
+        state = self.chat.describe()
+        state["messages"] = self.chat.recent(limit)
+        state["ready"] = self._chat_service_obj is not None
+        state["why_not_ready"] = (
+            "" if state["ready"] else self.runtime.paths.why_not_ready() or "preparando el chat"
+        )
+        return state
 
     # --------------------------------------------------- tu propio portal
     def local_url_for(self, host: str) -> str | None:

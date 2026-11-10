@@ -267,6 +267,33 @@ El atajo vale **sólo para tu dirección y tu nombre declarado**, y ese límite 
 cualquier otro destino pasa por los circuitos, o esto se convertiría en una forma de servir algo
 local bajo el nombre de otro.
 
+### Chat tipo IRC, desde el navegador
+
+En el tablero (`ncell desktop` → **Navegador**, o `http://127.0.0.1:9180/?token=…`) hay un panel de
+chat: entras a un nombre, ves quién está y lo que se dice **mientras estás**.
+
+El «ping» que busca a otros programas activos no es un ping: es un registro de TTL corto en el DHT
+bajo la clave del canal, que dice *«estoy aquí, y se me alcanza por aquí»*. Quien quiera hablar
+consulta esa clave. Un multicast sólo cruzaría la red local; un ping directo exigiría saber a
+quién, que es el problema que esto resuelve.
+
+A partir de ahí **no hay servidor**: cada miembro abre una sesión de rendezvous con los demás y
+reparte cada mensaje a todos. Nadie «tiene» el canal y por nadie pasa todo.
+
+Tres cosas que conviene saber antes de usarlo:
+
+- **No llegan los mensajes de antes de entrar**, como en IRC. Lo contrario exige que alguien
+  almacene y reenvíe, y eso es un servidor con otro nombre.
+- **Escala a un grupo, no a una multitud.** Reparto completo: N miembros son N−1 envíos por
+  mensaje. A partir de unas decenas haría falta otra cosa.
+- **Estar en un canal es público.** Cualquiera puede consultar su clave y ver qué direcciones dicen
+  estar ahí; es inevitable en un canal abierto. Por eso el chat usa una **identidad propia**
+  (`chat.key`), distinta de la de tu portal: ver tu apodo en `#general` no debe revelar que eres
+  quien publica `nullcell.null`.
+
+Cada mensaje va **firmado**: la sesión ya cifra, pero en un canal cualquiera puede entregarte un
+mensaje y decir que lo escribió otro.
+
 ### ¿Puede otro ordenador encontrar tu portal solo?
 
 **El nombre sí; la red no.** Conviene separarlo porque son dos cosas:

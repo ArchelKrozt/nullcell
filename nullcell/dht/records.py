@@ -69,6 +69,7 @@ class RecordType(StrEnum):
     PRIVATE = "private"  # private service: blinded index, encrypted body (§6)
     KEYWORD = "keyword"
     NAME = "name"
+    PRESENCE = "presence"  # «estoy en este canal», con TTL corto (M10)
 
 
 class RecordError(Exception):
@@ -211,6 +212,16 @@ def name_key(name: str) -> bytes:
     return hashlib.sha256(b"name:" + name.strip().lower().encode()).digest()
 
 
+def channel_key(channel: str) -> bytes:
+    """Clave DHT de un canal de chat (M10): ``sha256("ch:" + canal)``.
+
+    Quien consulte esta clave ve **quién dice estar en el canal**. No se puede
+    evitar en un canal abierto —hay que poder encontrarse para hablar— y por
+    eso la presencia se publica con una identidad distinta de la del portal.
+    """
+    return hashlib.sha256(b"ch:" + channel.strip().lower().encode()).digest()
+
+
 def keyword_key(word: str, shard: int = 0) -> bytes:
     """DHT key for a keyword, sharded (§8, §16).
 
@@ -250,6 +261,9 @@ def _expected_key(record_type: RecordType, pub: bytes, body: dict[str, Any]) -> 
     if record_type is RecordType.NAME:
         name = body.get("name")
         return name_key(name) if isinstance(name, str) else None
+    if record_type is RecordType.PRESENCE:
+        channel = body.get("ch")
+        return channel_key(channel) if isinstance(channel, str) else None
     return None  # KEYWORD: the key is the word, not the publisher
 
 

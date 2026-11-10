@@ -319,3 +319,108 @@ function connect() {
 }
 
 connect();
+
+/* ------------------------------------------------------------- chat (M10)
+ *
+ * Tipo IRC: entras a un nombre, ves quién está y lo que se dice mientras
+ * estás. Nada se guarda en disco, ni aquí ni en el nodo: lo que no estabas
+ * para leer, no se lee. Guardarlo significaría que *alguien* lo guarda.
+ *
+ * El texto se inserta con textContent y nunca como HTML. Un mensaje de chat
+ * es lo más parecido a entrada hostil que recibe esta página: lo escribe
+ * cualquiera del canal y lo pinta tu navegador.
+ */
+const chat = {
+  join: el("chat-join"),
+  say: el("chat-say"),
+  channel: el("chat-channel"),
+  nick: el("chat-nick"),
+  text: el("chat-text"),
+  log: el("chat-log"),
+  status: el("chat-status"),
+  seen: new Set(),
+};
+
+async function chatCall(path, body) {
+  const response = await fetch(path, {
+    method: body ? "POST" : "GET",
+    credentials: "same-origin",
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+  return payload;
+}
+
+function pintarChat(state) {
+  if (!state || !state.channel) {
+    chat.status.textContent = "sin canal";
+    chat.say.hidden = true;
+    return;
+  }
+  chat.say.hidden = false;
+  if (!chat.channel.value.trim() || chat.channel.value === "#general") {
+    chat.channel.value = `#${state.channel}`;
+  }
+  if (!chat.nick.value.trim()) chat.nick.value = state.nick;
+  const conectados = state.connected || 0;
+  const miembros = (state.members || []).length;
+  chat.status.textContent = state.ready
+    ? `#${state.channel} · ${state.nick} · ${conectados} de ${miembros} conectados`
+    : `#${state.channel} · ${state.why_not_ready || "preparando"}`;
+
+  for (const m of state.messages || []) {
+    if (chat.seen.has(m.mid)) continue;
+    chat.seen.add(m.mid);
+    const line = document.createElement("div");
+    line.className = m.mine ? "chat-line mine" : "chat-line";
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = `${m.nick}:`;          // nunca innerHTML
+    const what = document.createElement("span");
+    what.className = "what";
+    what.textContent = m.text;               // idem
+    line.append(who, what);
+    chat.log.append(line);
+    while (chat.log.childElementCount > CONSOLE_MAX) chat.log.firstElementChild.remove();
+  }
+  chat.log.scrollTop = chat.log.scrollHeight;
+}
+
+chat.join.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    chat.seen.clear();
+    chat.log.replaceChildren();
+    pintarChat(await chatCall("/api/chat/join", {
+      channel: chat.channel.value, nick: chat.nick.value,
+    }));
+  } catch (error) {
+    chat.status.textContent = error.message;
+  }
+});
+
+chat.say.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const text = chat.text.value.trim();
+  if (!text) return;
+  chat.text.value = "";
+  try {
+    pintarChat(await chatCall("/api/chat/say", { text }));
+  } catch (error) {
+    chat.status.textContent = error.message;
+  }
+});
+
+/* El estado del chat vive en el nodo, no en esta pestaña. Sin esto, recargar
+ * la página mostraba «sin canal» mientras el nodo seguía dentro: la interfaz
+ * contando su propia versión de los hechos, que es justo lo que §9 prohíbe. */
+async function refrescarChat() {
+  try {
+    pintarChat(await chatCall("/api/chat"));
+  } catch { /* el nodo contestará en el siguiente ciclo */ }
+}
+
+refrescarChat();
+setInterval(refrescarChat, 2000);

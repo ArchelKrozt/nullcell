@@ -71,6 +71,10 @@ DIFFICULTY: Final[dict[str, int]] = {
     "private": 9,  # ~0,5 s — same cost; privacy is not a discount
     "keyword": 11,  # ~1,9 s each; a site with 10 keywords pays ~19 s
     "name": 14,  # ~15 s — first-come on a scarce global namespace
+    # La presencia se renueva cada pocos minutos mientras el chat está
+    # abierto, así que su coste se paga una y otra vez: barata a propósito.
+    # Lo que la protege de ser inundada no es el PoW sino su TTL corto.
+    "presence": 8,  # ~0,2 s
 }
 
 _MAX_ATTEMPTS_DEFAULT: Final[int] = 1 << 24

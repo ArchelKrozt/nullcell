@@ -364,6 +364,35 @@ class LocalUI:
         self.bus.emit("control.portal", result.get("detail", "portal retirado"))
         return web.json_response(result)
 
+    # ------------------------------------------------------------ chat M10
+    async def _chat_state(self, request: web.Request) -> web.StreamResponse:
+        return web.json_response(self._panel().chat_state())
+
+    async def _chat_join(self, request: web.Request) -> web.StreamResponse:
+        panel = self._panel()
+        body = await _json_body(request)
+        channel = body.get("channel")
+        if not isinstance(channel, str) or not channel.strip():
+            return web.json_response({"error": "falta 'channel'"}, status=400)
+        try:
+            state = await panel.join(channel, str(body.get("nick") or ""))
+        except control_mod.ControlError as refused:
+            return web.json_response({"error": str(refused)}, status=409)
+        self.bus.emit("chat.join", f"entraste en #{state['channel']} como {state['nick']}")
+        return web.json_response(panel.chat_state())
+
+    async def _chat_say(self, request: web.Request) -> web.StreamResponse:
+        panel = self._panel()
+        body = await _json_body(request)
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return web.json_response({"error": "falta 'text'"}, status=400)
+        try:
+            await panel.say(text)
+        except control_mod.ControlError as refused:
+            return web.json_response({"error": str(refused)}, status=409)
+        return web.json_response(panel.chat_state())
+
     async def _publish_folder(self, request: web.Request) -> web.StreamResponse:
         panel = self._panel()
         body = await _json_body(request)
@@ -395,6 +424,9 @@ class LocalUI:
                 web.post("/api/control/portal", self._publish_folder),
                 web.delete("/api/control/portal", self._unpublish),
                 web.post("/api/control/seed", self._add_seed),
+                web.get("/api/chat", self._chat_state),
+                web.post("/api/chat/join", self._chat_join),
+                web.post("/api/chat/say", self._chat_say),
             ]
         )
         return app

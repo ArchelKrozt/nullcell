@@ -470,3 +470,74 @@ async def test_the_shortcut_does_not_apply_to_anybody_else(tmp_path):
 
 async def test_without_a_portal_there_is_nothing_local_to_serve():
     assert panel().local_url_for("nullcell") is None
+
+
+# ----------------------------------- M10: el escritorio y la decisión 8 (§7)
+async def test_the_desktop_switches_to_circuits_when_it_can(tmp_path):
+    """La misma decisión 8 sin conectar, por otro camino.
+
+    Los comandos pasan por `_runtime(anonymous=True)`; el escritorio construye
+    su Runtime a mano, así que su DHT se quedaba en directo para siempre — y
+    el propio tablero lo mostraba como «dht: directo» sin que eso llamara la
+    atención de nadie.
+    """
+    from nullcell.cli.runtime import Runtime
+    from nullcell.core.identity import Identity
+
+    runtime = Runtime.assemble(Identity.generate(), tmp_path)
+    # `PathBuilder.ready` es de sólo lectura, así que se sustituye el
+    # constructor entero por el doble: lo que se prueba es el cableado, no la
+    # selección de rutas.
+    runtime.paths = FakePaths(ready=True)
+    p = ControlPanel(runtime, home=tmp_path)
+
+    assert not runtime.anonymous
+    await p.reconcile()
+    assert runtime.anonymous, "el escritorio siguió consultando el DHT en claro"
+    await runtime.close()
+
+
+async def test_going_anonymous_happens_once(tmp_path):
+    from nullcell.cli.runtime import Runtime
+    from nullcell.core.identity import Identity
+
+    runtime = Runtime.assemble(Identity.generate(), tmp_path)
+    runtime.paths = FakePaths(ready=True)
+    p = ControlPanel(runtime, home=tmp_path)
+    await p.reconcile()
+    first = runtime.node.transport
+    await p.reconcile()
+    assert runtime.node.transport is first, "se reconstruyó el transporte cada ciclo"
+    await runtime.close()
+
+
+# -------------------------------------------------- M10: chat en el panel
+async def test_the_chat_identity_is_not_the_node_identity(tmp_path):
+    """La pertenencia a un canal es pública, así que si el chat hablara con la
+    identidad del nodo, ver tu apodo en #general revelaría que eres quien
+    publica tu portal."""
+    p = panel()
+    p.home = tmp_path
+    assert p.chat_identity.public_key != p.runtime.identity.public_key
+    assert (tmp_path / "chat.key").is_file()
+
+
+async def test_you_can_join_and_talk_before_there_is_any_network(tmp_path):
+    """Como el portal: se puede usar, y dice que todavía no llega a nadie."""
+    p = panel(ready=False)
+    p.home = tmp_path
+    state = await p.join("#general", "Diego")
+    try:
+        assert state["channel"] == "general"
+        await p.say("hola")
+        full = p.chat_state()
+        assert [m["text"] for m in full["messages"]] == ["hola"]
+        assert full["ready"] is False
+        assert full["why_not_ready"]
+    finally:
+        await p.chat.close()
+
+
+async def test_speaking_without_a_channel_is_refused():
+    with pytest.raises(ControlError, match="ningún canal"):
+        await panel().say("hola")
