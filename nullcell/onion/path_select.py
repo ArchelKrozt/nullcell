@@ -58,6 +58,35 @@ __all__ = [
 ]
 
 CIRCUIT_LENGTH: Final[int] = 3
+
+
+def anonymity_warning(hops: int) -> str:
+    """Qué se pierde exactamente con menos de tres saltos.
+
+    Escrito una vez y repetido en todas partes a propósito: un modo que
+    renuncia al anonimato tiene que decirlo en cada sitio donde se note, o se
+    convierte en un ajuste que alguien puso una vez y olvidó.
+    """
+    if hops >= CIRCUIT_LENGTH:
+        return ""
+    if hops == 1:
+        detalle = (
+            "Con UN salto, ese único relevo ve tu dirección IP y a qué portal vas, "
+            "las dos cosas a la vez."
+        )
+    else:
+        detalle = (
+            "Con DOS saltos, el primero sabe quién eres y el segundo adónde vas: "
+            "entre los dos lo saben todo."
+        )
+    return (
+        f"SIN ANONIMATO — circuitos de {hops} salto"
+        f"{'' if hops == 1 else 's'} en lugar de {CIRCUIT_LENGTH}. "
+        f"{detalle} El contenido sigue cifrado, pero quién habla con quién, no. "
+        "Sirve para probar tu propia red; no para esconderte de nadie."
+    )
+
+
 GUARD_COUNT: Final[int] = 3
 #: §7 says weeks. Long enough that rotation is not what identifies you, short
 #: enough that a guard that quietly went hostile does not keep you forever.
@@ -451,19 +480,30 @@ class PathBuilder:
         *,
         min_pow_bits: int = 0,
         rng: random.Random | None = None,
+        hops: int = CIRCUIT_LENGTH,
     ) -> None:
         self.directory = directory
         self.guards = guards
         self.min_pow_bits = min_pow_bits
         self.rng = rng or random.Random()
+        #: Cuántos saltos tiene un circuito. **Tres es lo que da el anonimato**
+        #: —el primero sabe quién eres, el último adónde vas, y el del medio no
+        #: sabe nada— y bajarlo rompe esa propiedad, no la debilita.
+        #:
+        #: Se puede bajar de todas formas, y la razón es honesta: una red nueva
+        #: no tiene tres operadores, así que exigirlos siempre significa que
+        #: nunca podría existir una red nueva. Quien lo baja ve el aviso en
+        #: cada sitio donde se nota, y `anonymous` dice que no.
+        self.hops = max(1, int(hops))
 
-    def build(self, *, length: int = CIRCUIT_LENGTH, ending_at: Hop | None = None) -> list[Hop]:
+    def build(self, *, length: int | None = None, ending_at: Hop | None = None) -> list[Hop]:
         """A path of *length* hops, optionally ending at a given relay.
 
         ``ending_at`` is how a path to a specific intro point or rendezvous
         point is built: the last hop is fixed, the rest still obey the guard
         and diversity rules.
         """
+        length = self.hops if length is None else length
         if ending_at is None:
             return select_path(
                 self.directory.candidates(),
@@ -490,7 +530,17 @@ class PathBuilder:
 
     @property
     def ready(self) -> bool:
-        return len(self.directory.usable(min_pow_bits=self.min_pow_bits)) >= CIRCUIT_LENGTH
+        return len(self.directory.usable(min_pow_bits=self.min_pow_bits)) >= self.hops
+
+    @property
+    def anonymous(self) -> bool:
+        """Si estos circuitos ocultan algo.
+
+        Con menos de tres saltos, no. Con dos, el primero sabe quién eres y el
+        segundo adónde vas, y entre los dos lo saben todo. Con uno, un solo
+        nodo lo sabe todo él solo.
+        """
+        return self.hops >= CIRCUIT_LENGTH
 
     def missing(self, *, now: float | None = None) -> dict:
         """What stands between this cell and its first circuit.
@@ -517,7 +567,7 @@ class PathBuilder:
         prefixes = {p for c in known if c.pow_bits >= self.min_pow_bits for p in c.prefixes}
 
         ready_in: float | None = None
-        still_needed = CIRCUIT_LENGTH - len(usable)
+        still_needed = self.hops - len(usable)
         if still_needed <= 0:
             ready_in = 0.0
         elif len(waiting) >= still_needed:
@@ -526,7 +576,8 @@ class PathBuilder:
         return {
             "known": len(known),
             "usable": len(usable),
-            "needed": CIRCUIT_LENGTH,
+            "needed": self.hops,
+            "anonymous": self.anonymous,
             "operators": len(prefixes),
             "waiting": len(waiting),
             "ready_in": ready_in,
@@ -547,7 +598,7 @@ class PathBuilder:
             return "no se conoce ningún relevo todavía: hace falta una semilla (§7)"
 
         usable = len(self.directory.usable(min_pow_bits=self.min_pow_bits, now=now))
-        if usable >= CIRCUIT_LENGTH:
+        if usable >= self.hops:
             return ""
 
         # §7 cuenta operadores, no máquinas: diez relevos del mismo proveedor
@@ -560,12 +611,12 @@ class PathBuilder:
                 for prefix in c.prefixes
             }
         )
-        if operators < CIRCUIT_LENGTH:
-            faltan = CIRCUIT_LENGTH - operators
+        if operators < self.hops:
+            faltan = self.hops - operators
             return (
                 f"{total} relevos en {operators} operador"
                 f"{'' if operators == 1 else 'es'} distinto"
-                f"{'' if operators == 1 else 's'}. §7 exige {CIRCUIT_LENGTH} operadores "
+                f"{'' if operators == 1 else 's'}. Hacen falta {self.hops} operadores "
                 f"distintos, así que esperar no basta: faltan {faltan} más, "
                 "y tienen que ser de otra gente o de otro proveedor"
             )

@@ -124,3 +124,11 @@ code { color: var(--accent-data); }
                  word-break: break-all; }
 .portal-links { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .portal-links a { color: var(--accent-data); font-size: 10.5px; }
+
+
+/* Un modo que renuncia al anonimato tiene que decirlo donde no se pueda no
+   ver, o se convierte en un ajuste que alguien puso una vez y olvidó. */
+.danger {
+  margin: 0; padding: 9px 12px; font-size: 11px; line-height: 1.5;
+  color: var(--bg); background: var(--accent-alert); font-weight: 600;
+}

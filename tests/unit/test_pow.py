@@ -142,7 +142,12 @@ async def test_the_loop_keeps_breathing_during_a_long_solve():
     # ahora 8× el reposo— y las tres por lo mismo: medir el entorno creyendo
     # medir el código. El factor relativo se queda sólo para subir el listón
     # en máquinas lentas, nunca para bajarlo.
-    techo = max(max(base) * 20, 200.0)
+    # 400 ms es la cifra que §16 documenta como dañina -"400 ms de bucle
+    # congelado tiran circuitos vivos"- así que el test falla exactamente
+    # cuando el daño es real, ni antes ni después. Elegir 200 era inventarme
+    # un margen más estricto que el requisito y pagarlo en falsos positivos:
+    # un bucle de verdad bloqueado por el PoW se para SEGUNDOS, no 300 ms.
+    techo = max(max(base) * 20, 400.0)
 
     durante, nonce = await latidos(0, P.solve_async(b"reto-largo", 14))
     P.verify(b"reto-largo", nonce, 14)
@@ -150,7 +155,7 @@ async def test_the_loop_keeps_breathing_during_a_long_solve():
     assert durante, "el bucle nunca recuperó el control"
     assert max(durante) < techo, (
         f"el bucle se paró {max(durante):.0f} ms; ocioso su peor pausa es "
-        f"{max(base):.1f} ms, y §16 pone el daño real en 400 ms, "
+        f"{max(base):.1f} ms, y §16 pone el daño en 400 ms, "
         f"así que el techo era {techo:.0f} ms"
     )
 

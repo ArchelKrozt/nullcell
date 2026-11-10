@@ -41,6 +41,7 @@ class NodeThread:
         seeds: list[str] | None = None,
         lan: bool = False,
         config: str | None = None,
+        hops: int = 3,
     ) -> None:
         self.port = port
         self.host = host
@@ -49,6 +50,7 @@ class NodeThread:
         self.seeds = seeds or []
         self.lan = lan
         self.config = config
+        self.hops = hops
 
         self.url: str | None = None
         self.reach: str = "unknown"
@@ -149,7 +151,7 @@ class NodeThread:
         endpoint, self.reach = reach_mod.best_endpoint(self.port, announce=self.announce)
         endpoints = [endpoint]
 
-        runtime = Runtime.assemble(identity, home, endpoints=endpoints)
+        runtime = Runtime.assemble(identity, home, endpoints=endpoints, hops=self.hops)
         # Publicado de inmediato, no al final: el guardado de pares ocurre
         # justo después del bootstrap y lo leía de aquí, así que asignarlo
         # tarde hacía que ese guardado fallara —en silencio, porque el

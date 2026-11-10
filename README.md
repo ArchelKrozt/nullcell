@@ -220,6 +220,28 @@ puede.
   otro y un botón para copiar la tuya.
 - **El navegador sí se queda apagado** hasta que haya circuitos, porque ahí no hay media tinta.
 
+### Una red que acaba de nacer: `--hops`
+
+Hay un problema de arranque que conviene mirar de frente: §7 exige **3 operadores distintos**, así
+que en una red nueva no funciona nada hasta que haya gente, y no hay gente hasta que funcione algo.
+Exigirlo siempre significa que una red nueva no puede existir.
+
+```bash
+ncell desktop --hops 1    # un salto: funciona con un solo relevo
+```
+
+**El precio está escrito y no se puede no ver:** con un salto, ese único relevo ve tu IP y a qué
+portal vas, las dos cosas a la vez. Con dos, el primero sabe quién eres y el segundo adónde vas, y
+entre ellos lo saben todo. El contenido sigue cifrado extremo a extremo; lo que se pierde es
+**quién habla con quién**, que es justamente lo que Nullcell existe para proteger.
+
+Sirve para **probar tu propia red** —ver tu portal desde otra máquina, comprobar que el chat
+cruza— no para esconderte de nadie. El panel lo muestra en magenta arriba del todo mientras esté
+puesto, y la línea de comandos lo avisa al arrancar, porque un modo así se convierte en un ajuste
+que alguien puso una vez y olvidó.
+
+El valor por defecto sigue siendo 3, y lo seguirá siendo.
+
 ### Lo que compartir ancho de banda hace, y lo que no
 
 Compartir te convierte en **relevo**: ayudas a otros a construir circuitos. **No te conecta a la

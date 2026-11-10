@@ -29,7 +29,12 @@ from nullcell.net.listener import Listener
 from nullcell.onion import rendezvous
 from nullcell.onion.circuit import Hop
 from nullcell.onion.handshake_nk import x25519_public_bytes
-from nullcell.onion.path_select import GuardSet, PathBuilder, RelayDirectory
+from nullcell.onion.path_select import (
+    CIRCUIT_LENGTH,
+    GuardSet,
+    PathBuilder,
+    RelayDirectory,
+)
 from nullcell.onion.relay_logic import RelayService
 from nullcell.onion.service import CircuitManager
 from nullcell.services.publisher import Publisher
@@ -75,6 +80,7 @@ class Runtime:
         *,
         endpoints: list[str] | None = None,
         min_pow_bits: int = MIN_RELAY_POW,
+        hops: int = CIRCUIT_LENGTH,
     ) -> Runtime:
         node = KademliaNode(identity, DirectTransport(), endpoints=endpoints or [])
         relay = RelayService(identity.x25519_private)
@@ -88,7 +94,7 @@ class Runtime:
             relay=relay,
             directory=directory,
             guards=guards,
-            paths=PathBuilder(directory, guards, min_pow_bits=min_pow_bits),
+            paths=PathBuilder(directory, guards, min_pow_bits=min_pow_bits, hops=hops),
             circuits=CircuitManager(),
             publisher=Publisher(identity, node),
             resolver=Resolver(node, hosts_file=home / "hosts"),

@@ -18,9 +18,14 @@ from nullcell.gateway.localui import TOKEN_HEADER, LocalUI
 
 
 class FakePaths:
-    def __init__(self, ready: bool = True, *, ready_in: float | None = None) -> None:
+    def __init__(self, ready: bool = True, *, ready_in: float | None = None, hops: int = 3) -> None:
         self.ready = ready
         self.ready_in = ready_in
+        self.hops = hops
+
+    @property
+    def anonymous(self) -> bool:
+        return self.hops >= 3
 
     def why_not_ready(self) -> str:
         return "" if self.ready else "hacen falta 3 relevos usables (§7)"
@@ -33,6 +38,7 @@ class FakePaths:
             "operators": 3 if self.ready else 0,
             "waiting": 0,
             "ready_in": 0.0 if self.ready else self.ready_in,
+            "anonymous": self.anonymous,
             "why": self.why_not_ready(),
         }
 
@@ -92,11 +98,11 @@ class FakeDirectory:
 
 
 class FakeRuntime:
-    def __init__(self, *, endpoints=None, ready: bool = True, relays=None) -> None:
+    def __init__(self, *, endpoints=None, ready: bool = True, relays=None, hops: int = 3) -> None:
         self.directory = FakeDirectory(relays)
         self.node = FakeNode(endpoints)
         self.publisher = FakePublisher()
-        self.paths = FakePaths(ready)
+        self.paths = FakePaths(ready, hops=hops)
         self.identity = FakeIdentity()
         self.tasks: list = []
 
@@ -612,3 +618,20 @@ async def test_a_failing_bootstrap_is_explained_not_a_500():
     p = ControlPanel(runtime, home=pathlib.Path(tempfile.mkdtemp()))
     with pytest.raises(ControlError, match="no se pudo entrar"):
         await p.add_seed(seed_line_for())
+
+
+# --------------------------- M10: menos de 3 saltos se dice, no se esconde
+def test_a_shortened_circuit_is_announced_everywhere():
+    """Un modo que renuncia al anonimato tiene que decirlo en cada sitio donde
+    se note, o se convierte en un ajuste que alguien puso una vez y olvidó."""
+    p = panel(hops=1)
+    state = p.describe()
+    assert state["anonymous"] is False
+    assert "SIN ANONIMATO" in state["anonymity_warning"]
+    assert "ve tu dirección IP" in state["anonymity_warning"]
+
+
+def test_three_hops_says_nothing_because_there_is_nothing_to_say():
+    state = panel().describe()
+    assert state["anonymous"] is True
+    assert state["anonymity_warning"] == ""

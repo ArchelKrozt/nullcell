@@ -121,6 +121,11 @@ async function refresh() {
     $("dot").className = `dot ${control.paths_ready ? "up" : "wait"}`;
     $("stats").textContent = `${s.peers ?? 0} celdas · ${s.relays ?? 0} relevos usables`;
 
+    // Arriba del todo y en magenta: si esto está puesto, se ve siempre.
+    const danger = $("danger");
+    danger.hidden = !control.anonymity_warning;
+    danger.textContent = control.anonymity_warning || "";
+
     pintarRed(control.network, control.paths_ready);
     pintarPortal(control.portal);
 

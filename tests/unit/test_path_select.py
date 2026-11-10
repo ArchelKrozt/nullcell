@@ -261,3 +261,44 @@ def test_a_ready_directory_has_nothing_to_say(tmp_path):
     relays = [candidate(f"62.{171 + i}.160.130", first_seen=OLD) for i in range(3)]
     paths = PathBuilder(directory_of(*relays), GuardSet(tmp_path / "g.json"))
     assert paths.why_not_ready() == ""
+
+
+# ------------------- M10: una red nueva no tiene 3 operadores todavía (§7)
+def test_a_shorter_circuit_can_be_built_when_asked_for(tmp_path):
+    """La crítica que lo motivó, y es justa: exigir 3 operadores *siempre*
+    significa que una red nueva no puede existir nunca, porque nada funciona
+    hasta que ya hay gente y no hay gente hasta que algo funciona."""
+    only_one = directory_of(candidate("62.171.160.130", first_seen=OLD))
+
+    strict = PathBuilder(only_one, GuardSet(tmp_path / "a.json"))
+    assert not strict.ready, "con 3 saltos y un relevo no hay ruta, y eso es correcto"
+
+    relaxed = PathBuilder(only_one, GuardSet(tmp_path / "b.json"), hops=1)
+    assert relaxed.ready
+    assert len(relaxed.build()) == 1
+
+
+def test_fewer_hops_is_reported_as_not_anonymous(tmp_path):
+    directory = directory_of(candidate("62.171.160.130", first_seen=OLD))
+    assert PathBuilder(directory, GuardSet(tmp_path / "a.json")).anonymous is True
+    for hops in (1, 2):
+        shortened = PathBuilder(directory, GuardSet(tmp_path / f"{hops}.json"), hops=hops)
+        assert shortened.anonymous is False
+
+
+def test_the_warning_names_what_is_actually_lost():
+    """«Menos seguro» no dice nada. Lo que hay que decir es quién ve qué."""
+    from nullcell.onion.path_select import anonymity_warning
+
+    assert anonymity_warning(3) == ""
+    uno, dos = anonymity_warning(1), anonymity_warning(2)
+    assert "ve tu dirección IP y a qué portal vas" in uno
+    assert "el primero sabe quién eres y el segundo adónde vas" in dos
+    for texto in (uno, dos):
+        assert "SIN ANONIMATO" in texto
+        assert "El contenido sigue cifrado" in texto, "no exagerar tampoco"
+
+
+def test_the_hop_count_cannot_be_zero(tmp_path):
+    """Cero saltos no es un circuito, es una conexión directa con otro nombre."""
+    assert PathBuilder(RelayDirectory(), GuardSet(tmp_path / "g.json"), hops=0).hops == 1

@@ -44,6 +44,7 @@ from typing import Any, Final
 from nullcell.core import ids
 from nullcell.core import reach as reach_mod
 from nullcell.core.identity import Identity
+from nullcell.onion.path_select import anonymity_warning
 
 __all__ = ["Action", "ControlError", "ControlPanel"]
 
@@ -652,6 +653,8 @@ class ControlPanel:
             "reach": self.reach,
             "reach_detail": reach_mod.describe(self.reach),
             "paths_ready": bool(self.runtime.paths.ready),
+            "anonymous": bool(self.runtime.paths.anonymous),
+            "anonymity_warning": anonymity_warning(self.runtime.paths.hops),
             "why_not_ready": missing["why"],
             "network": missing,
             "portal": self.portal,

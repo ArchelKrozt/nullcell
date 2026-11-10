@@ -277,6 +277,14 @@ async def _runtime(identity, cfg, *, endpoints=None, seeds=None, listen=None, an
     return runtime
 
 
+def _warn_if_not_anonymous(hops: int) -> None:
+    """Decirlo al arrancar, en rojo, antes de que empiece nada."""
+    from nullcell.onion.path_select import anonymity_warning
+
+    if warning := anonymity_warning(hops):
+        typer.secho(f"\n⚠  {warning}\n", fg=typer.colors.RED, bold=True, err=True)
+
+
 def _require_paths(runtime) -> None:
     if runtime.paths.ready:
         return
@@ -899,6 +907,16 @@ def cmd_desktop(
             help="carpeta de despliegue portátil: portales, nombres e identidad",
         ),
     ] = None,
+    hops: Annotated[
+        int,
+        typer.Option(
+            "--hops",
+            min=1,
+            max=5,
+            help="saltos por circuito. 3 es lo que da el anonimato; menos sirve "
+            "para probar una red que aún no tiene 3 operadores",
+        ),
+    ] = 3,
     log_level: Annotated[str, typer.Option("--log-level")] = "warning",
 ) -> None:
     """Icono en la barra de menús, panel con interruptores y navegador (§9).
@@ -910,6 +928,7 @@ def cmd_desktop(
     from nullcell.cli.logging_setup import setup as setup_logging
 
     setup_logging(log_level)
+    _warn_if_not_anonymous(hops)
     try:
         from nullcell.desktop.app import run
     except ImportError:
@@ -927,6 +946,7 @@ def cmd_desktop(
             hud_port=hud_port,
             lan=lan,
             config=config_dir,
+            hops=hops,
         )
     )
 
