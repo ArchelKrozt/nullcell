@@ -1,10 +1,12 @@
-# Carpeta de despliegue
+# La carpeta de despliegue
+
+Cómo se declara qué publica una celda y con qué nombre, y cómo mudarlo a otra máquina.
 
 Todo lo que define **tu presencia en la red** vive aquí, para que mudarse a otra máquina —una
 Raspberry Pi, un VPS— sea copiar una carpeta y no reconstruir una configuración.
 
 ```
-null-despliegue/
+mi-despliegue/
   nullcell.toml     lo que TÚ declaras: qué publicar y con qué nombre
   estado.json       lo que el programa cambia en marcha
   identity.key      (no está todavía) la identidad de esta celda
@@ -12,7 +14,7 @@ null-despliegue/
 
 ```bash
 ncell desktop                          # lo busca solo
-ncell desktop --config ./otra-carpeta  # o se lo dices tú
+ncell desktop --config ./mi-despliegue  # o se lo dices tú
 ```
 
 ## El programa no reescribe tu declaración
@@ -21,7 +23,7 @@ ncell desktop --config ./otra-carpeta  # o se lo dices tú
 cambia en marcha —si estás compartiendo ancho de banda— va a `estado.json`, que es del programa.
 
 Esa separación no es orden por gusto. Antes el programa guardaba encima de tu fichero y, al
-hacerlo, convertía un `../null-mi-web` escrito a mano en una ruta absoluta y borraba el título y
+hacerlo, convertía un `../mi-web` escrito a mano en una ruta absoluta y borraba el título y
 las etiquetas: exactamente lo que estas instrucciones te dicen que no hagas, hecho por el
 programa y en silencio. Guardar con más cuidado era el parche; dejar de guardar ahí es el arreglo.
 
@@ -55,8 +57,8 @@ Consecuencia que conviene entender antes de mudarse: si copias esta carpeta a un
 Para llevarte la identidad contigo:
 
 ```bash
-cp ~/.nullcell/identity.key null-despliegue/identity.key
-chmod 600 null-despliegue/identity.key
+cp ~/.nullcell/identity.key mi-despliegue/identity.key
+chmod 600 mi-despliegue/identity.key
 ```
 
 > **Eso es una clave privada en una carpeta que vas a copiar.** Trátala como tal: sin repositorios
@@ -65,7 +67,7 @@ chmod 600 null-despliegue/identity.key
 
 ## Rutas relativas, a propósito
 
-`"folder": "../null-mi-web"` es relativo **a esta carpeta**. Una ruta absoluta como
+`"folder": "../mi-web"` es relativo **a esta carpeta**. Una ruta absoluta como
 `/Users/alguien/sitio` deja de existir en cuanto la carpeta llega a otra máquina, y el fallo
 aparece como un portal vacío en lugar de como un error claro. El programa avisa si ve una ruta
 absoluta.
@@ -73,7 +75,7 @@ absoluta.
 Si quieres que la mudanza sea una sola carpeta, mete el sitio dentro:
 
 ```
-null-despliegue/
+mi-despliegue/
   nullcell.json     con  "folder": "sitios/mi-web"
   identity.key
   sitios/mi-web/

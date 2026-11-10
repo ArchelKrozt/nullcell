@@ -251,7 +251,7 @@ Todo lo que define tu presencia en la red cabe en una carpeta, para que mudarse 
 sea copiar y no reconstruir:
 
 ```
-null-despliegue/
+mi-despliegue/
   nullcell.toml     lo que TÚ declaras: qué publicar y con qué nombre
   estado.json       lo que el programa cambia en marcha
   identity.key      (opcional) la identidad de esta celda
@@ -272,9 +272,8 @@ respuesta.
 > por eso mismo: admite comentarios, y una configuración que no puede explicarse a sí misma acaba
 > explicada en otro sitio que se desactualiza.
 
-Hay un ejemplo completo en [`null-despliegue/`](null-despliegue/), que publica
-[`null-mi-web/`](null-mi-web/) —la documentación del proyecto, servida por la propia red— bajo el
-nombre `nullcell.null`.
+El formato, la mudanza y lo que pasa si apagas la máquina están en
+[`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md).
 
 > **La dirección *es* la clave.** `nullcell.null` no es un dominio que alguien te alquile: es un
 > nombre en el DHT atado a una clave Ed25519, y la dirección de 56 caracteres del portal **es esa
@@ -296,7 +295,7 @@ local bajo el nombre de otro.
 ### En una Raspberry Pi (o cualquier servidor sin pantalla)
 
 ```bash
-ncell node --config ./null-despliegue --announce tu-ip-o-dominio:4433 --relay
+ncell node --config ./mi-despliegue --announce tu-ip-o-dominio:4433 --relay
 ```
 
 Publica los portales de la carpeta **sin interfaz gráfica**, que es como se corre en un servidor.
