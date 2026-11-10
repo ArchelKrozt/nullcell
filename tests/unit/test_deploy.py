@@ -495,3 +495,38 @@ def test_an_unknown_level_is_reported_not_swallowed(capsys):
         assert "desconocido" in capsys.readouterr().out
     finally:
         setup("info")  # dejarlo como estaba para el resto de la suite
+
+
+# ------------------- M10: no obligar a escribir lo que se puede averiguar
+def test_a_relay_can_find_its_own_address_when_it_has_one(monkeypatch):
+    """En una máquina alojada la dirección pública está en su interfaz, así
+    que exigir `--announce` era fricción, no una necesidad."""
+    from nullcell.core import reach
+
+    monkeypatch.setattr(reach, "lan_address", lambda: "62.171.160.130")
+    endpoint, alcance = reach.best_endpoint(4433)
+    assert endpoint == "62.171.160.130:4433"
+    assert alcance == "internet"
+
+
+def test_a_relay_behind_nat_is_refused_with_instructions():
+    """Detrás de NAT no se puede averiguar, y entonces hay que decirlo: un
+    relevo que se anuncia en 192.168.x es una entrada inalcanzable en el
+    directorio de todos los demás."""
+    import inspect
+
+    from nullcell.cli import main
+
+    source = inspect.getsource(main.cmd_relay)
+    assert 'alcance != "internet"' in source
+    assert "redirige el puerto UDP" in source
+    assert "raise typer.Exit(2)" in source
+
+
+def test_announce_is_optional_now():
+    import inspect
+
+    from nullcell.cli import main
+
+    signature = inspect.signature(main.cmd_relay)
+    assert signature.parameters["announce"].default is None

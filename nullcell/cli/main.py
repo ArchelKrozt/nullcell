@@ -955,8 +955,13 @@ def cmd_desktop(
 @app.command("relay")
 def cmd_relay(
     announce: Annotated[
-        str, typer.Option("--announce", "-a", help="host:puerto público de esta celda")
-    ],
+        str | None,
+        typer.Option(
+            "--announce",
+            "-a",
+            help="host:puerto público de esta celda. Si se omite, se detecta",
+        ),
+    ] = None,
     port: Annotated[int, typer.Option("--port", "-p")] = 4433,
     host: Annotated[str, typer.Option("--host")] = "::",
     seed: Annotated[list[str] | None, typer.Option("--seed", help="<nid>@host:puerto")] = None,
@@ -982,6 +987,27 @@ def cmd_relay(
 
     setup_logging(log_level)
     identity, cfg = _load_identity()
+
+    # Obligar a escribir la dirección pública era fricción, no una necesidad:
+    # en una máquina alojada está en su propia interfaz y el programa puede
+    # verla. Detrás de NAT no puede, y entonces hay que decirlo —no inventar
+    # una dirección que no lleva a ninguna parte.
+    if announce is None:
+        from nullcell.core import reach
+
+        announce, alcance = reach.best_endpoint(port)
+        if alcance != "internet":
+            typer.secho(
+                f"✗ sólo me veo en {announce} ({alcance}), y un relevo tiene que ser "
+                "alcanzable desde internet.\n"
+                "   Si esta máquina está detrás de un router, redirige el puerto UDP "
+                f"{port} y dime tu IP pública:\n"
+                f"     ncell relay --announce TU_IP_PUBLICA:{port}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(2)
+        typer.secho(f"✓ me anuncio en {announce} (detectado)", fg=typer.colors.GREEN)
 
     if print_seed:
         typer.echo(seed_line(identity, announce))
