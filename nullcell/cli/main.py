@@ -298,9 +298,44 @@ def cmd_node(
     ] = False,
     hud: Annotated[bool, typer.Option("--hud", help="panel local de depuración (§9)")] = False,
     hud_port: Annotated[int, typer.Option("--hud-port")] = 9180,
+    # Nombre `config_dir` y no `config`: el módulo `config` está importado
+    # arriba y un parámetro homónimo lo tapa dentro de la función. Costó un
+    # arranque entero con un «'str' object has no attribute 'home'».
+    config_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--config",
+            "-c",
+            help="carpeta de despliegue: publica sus portales sin interfaz gráfica",
+        ),
+    ] = None,
 ) -> None:
-    """Arranca una celda completa: enlace, DHT, circuitos y mantenimiento."""
+    """Arranca una celda completa: enlace, DHT, circuitos y mantenimiento.
+
+    Con `--config` publica los portales de una carpeta de despliegue **sin
+    interfaz gráfica**, que es como se corre en un servidor o en una Raspberry
+    Pi: `ncell desktop` necesita PySide6, que no publica ruedas para ARM, así
+    que en una Pi la vía es ésta.
+    """
     identity, cfg = _load_identity()
+
+    # La dirección .null *es* la clave (§3): un despliegue que lleva la suya
+    # conserva su nombre al mudarse de máquina.
+    deployment = None
+    if config_dir:
+        from nullcell.host.deployment import Deployment
+
+        try:
+            deployment = Deployment.load(config_dir)
+        except ValueError as bad:
+            typer.secho(f"✗ {bad}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(2) from None
+        for warning in deployment.warnings():
+            typer.secho(f"⚠  {warning}", fg=typer.colors.YELLOW, err=True)
+        if (carried := deployment.identity_path) is not None:
+            identity, _ = Identity.load_or_create(carried)
+            typer.echo(f"  identidad del despliegue: {identity.short}")
+
     endpoints = [announce] if announce else [f"127.0.0.1:{port}"]
 
     from nullcell.discovery import pex
@@ -331,6 +366,24 @@ def cmd_node(
             await beacon.start()
             typer.echo("  baliza LAN activa")
 
+        panel = None
+        if deployment is not None:
+            from nullcell.gateway.control import ControlPanel
+
+            panel = ControlPanel(runtime, home=config.home(), deployment=deployment)
+            await panel.restore()
+            runtime.spawn(panel.run_forever())
+            estado = panel.describe().get("portal")
+            if estado:
+                typer.secho(
+                    f"✓ portal {estado['state']}: {estado['folder']}", fg=typer.colors.GREEN
+                )
+                typer.echo(f"  dirección: {estado['address']}")
+                if estado["state"] != "en línea":
+                    typer.echo("  sale a la red solo en cuanto haya relevos suficientes (§7)")
+            else:
+                typer.secho("⚠  el despliegue no declara ningún portal", fg=typer.colors.YELLOW)
+
         local_ui = None
         if hud:
             from nullcell.gateway.events import EventBus
@@ -341,7 +394,9 @@ def cmd_node(
             runtime.open_index()
             await runtime.refresh_portals()
             runtime.spawn(runtime.keep_portals_fresh())
-            local_ui = LocalUI(runtime.status, bus, port=hud_port, search=runtime.search)
+            local_ui = LocalUI(
+                runtime.status, bus, port=hud_port, search=runtime.search, control=panel
+            )
             url = await local_ui.start()
             bus.emit("node.up", f"{identity.short} escuchando en [{host}]:{port}")
             typer.secho(f"  HUD: {url}", fg=typer.colors.CYAN)
@@ -683,6 +738,68 @@ def cmd_browse(
         typer.echo("\nparado")
 
 
+@app.command("update")
+def cmd_update(
+    check: Annotated[
+        bool, typer.Option("--check/--no-check", help="preguntar por la última versión")
+    ] = True,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="no preguntar antes de contactar")
+    ] = False,
+) -> None:
+    """Dice si hay una versión nueva y cómo instalarla (§9, §12).
+
+    **Nunca se comprueba solo.** No hay tarea de fondo ni comprobación al
+    arrancar: una petición periódica a un servidor ajeno le diría a ese
+    servidor que hay un nodo Nullcell en esta IP, todos los días. Que haya que
+    escribir este comando *es* el consentimiento.
+    """
+    import sys
+
+    from nullcell.cli import updates
+
+    installed = _version()
+    typer.echo(f"instalada: {installed}")
+
+    if not check:
+        typer.echo(f"para actualizar:\n  {updates.upgrade_command(sys.executable)}")
+        return
+
+    typer.secho(
+        f"⚠  Esto contacta {updates.HOST}, que verá tu dirección IP. Es la única "
+        "petición a internet que hace Nullcell, y sólo cuando la pides.",
+        fg=typer.colors.YELLOW,
+    )
+    if not yes and not typer.confirm("¿Preguntar por la última versión?", default=True):
+        typer.echo(f"para actualizar a mano:\n  {updates.upgrade_command(sys.executable)}")
+        return
+
+    try:
+        latest = updates.fetch_latest()
+    except updates.NoReleases as todavia:
+        typer.secho(f"· {todavia}", fg=typer.colors.YELLOW)
+        typer.echo(
+            f"\npara ponerte al día con el código:\n  {updates.upgrade_command(sys.executable)}"
+        )
+        return
+    except ConnectionError as exc:
+        typer.secho(f"✗ {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from None
+
+    verdict = updates.compare(installed, latest.version)
+    if verdict < 0:
+        typer.secho(f"✓ hay una versión nueva: {latest.version}", fg=typer.colors.GREEN)
+        if latest.url:
+            typer.echo(f"  {latest.url}")
+        typer.echo(f"\npara actualizar:\n  {updates.upgrade_command(sys.executable)}")
+    elif verdict > 0:
+        # Correr desde el repositorio es normal, y decir «estás al día» ahí
+        # sería engañoso.
+        typer.echo(f"tu copia ({installed}) es más nueva que la publicada ({latest.version})")
+    else:
+        typer.secho("✓ estás al día", fg=typer.colors.GREEN)
+
+
 @app.command("invite")
 def cmd_invite(
     announce: Annotated[
@@ -725,7 +842,7 @@ def cmd_desktop(
     seed: Annotated[list[str] | None, typer.Option("--seed", help="<nid>@host:puerto")] = None,
     hud_port: Annotated[int, typer.Option("--hud-port")] = 9180,
     lan: Annotated[bool, typer.Option("--lan", help="baliza multicast en la LAN")] = False,
-    config: Annotated[
+    config_dir: Annotated[
         str | None,
         typer.Option(
             "--config",
@@ -760,7 +877,7 @@ def cmd_desktop(
             seeds=_seeds(seed),
             hud_port=hud_port,
             lan=lan,
-            config=config,
+            config=config_dir,
         )
     )
 

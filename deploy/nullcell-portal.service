@@ -1,0 +1,50 @@
+# Un portal .null servido desde un servidor o una Raspberry Pi.
+#
+#   sudo cp deploy/nullcell-portal.service /etc/systemd/system/
+#   sudo systemctl enable --now nullcell-portal
+#
+# Headless a propósito: `ncell desktop` necesita PySide6, que **no publica
+# ruedas para ARM**, así que en una Pi la vía es `ncell node --config`.
+#
+# Edita Environment=NULLCELL_DEPLOY y --announce antes de habilitarlo.
+[Unit]
+Description=Nullcell — portal .null
+Documentation=https://github.com/ArchelKrozt/nullcell
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nullcell
+Group=nullcell
+Environment=NULLCELL_HOME=/var/lib/nullcell
+Environment=NULLCELL_DEPLOY=/var/lib/nullcell/despliegue
+ExecStart=/opt/nullcell/bin/ncell node \
+    --config ${NULLCELL_DEPLOY} \
+    --announce CAMBIA-ESTO:4433 \
+    --port 4433 \
+    --relay
+
+# SIGTERM vacía los circuitos vivos antes de salir en lugar de tirarlos de
+# golpe (§10), y 30 s es lo que tarda en hacerlo con holgura.
+KillSignal=SIGTERM
+TimeoutStopSec=45
+Restart=on-failure
+RestartSec=10
+
+# La identidad es una clave privada y la dirección .null *es* esa clave (§3):
+# perderla es perder el nombre, así que el estado vive fuera del paquete.
+StateDirectory=nullcell
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nullcell
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

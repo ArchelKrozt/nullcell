@@ -267,6 +267,42 @@ El atajo vale **sólo para tu dirección y tu nombre declarado**, y ese límite 
 cualquier otro destino pasa por los circuitos, o esto se convertiría en una forma de servir algo
 local bajo el nombre de otro.
 
+### En una Raspberry Pi (o cualquier servidor sin pantalla)
+
+```bash
+ncell node --config ./null-despliegue --announce tu-ip-o-dominio:4433 --relay
+```
+
+Publica los portales de la carpeta **sin interfaz gráfica**, que es como se corre en un servidor.
+Hay una unidad de systemd lista en [`deploy/nullcell-portal.service`](deploy/nullcell-portal.service).
+
+> **`ncell desktop` no funciona en una Pi**, y conviene saberlo antes de intentarlo: necesita
+> PySide6 y Qt **no publica ruedas para ARM**. El escritorio es para tu Mac; la Pi corre el nodo.
+
+Lo que sí hace falta llevarse: `identity.key` dentro de la carpeta, o la Pi será otra celda con
+otra dirección y tu nombre `.null` seguirá apuntando al Mac.
+
+### Actualizaciones
+
+```bash
+ncell update            # pregunta si hay versión nueva, y avisa antes de contactar
+ncell update --no-check # sólo dice cómo actualizar, sin tocar la red
+```
+
+**Nunca se comprueba solo.** No hay tarea de fondo ni comprobación al arrancar, y eso es una
+decisión, no un olvido: una petición periódica a un servidor ajeno le diría a ese servidor que hay
+un nodo Nullcell en esa IP, todos los días, con la regularidad de un reloj. Para un relevo que
+corre meses en un servidor es un registro de su existencia que nadie pidió. Que tengas que escribir
+el comando *es* el consentimiento.
+
+El comando también detecta **cómo** está instalado: sobre una copia del repositorio dice
+`git pull`, porque un `pip install --upgrade` ahí no hace nada visible y te deja convencido de que
+ya actualizaste.
+
+> **Lo que debería ser, y aún no es:** publicar las versiones como registros firmados en el propio
+> DHT. La consulta iría por circuito, así que nadie sabría quién pregunta, y la firma del
+> mantenedor sustituiría a la confianza en GitHub. Hace falta una red con gente para que sirva.
+
 ### Chat tipo IRC, desde el navegador
 
 En el tablero (`ncell desktop` → **Navegador**, o `http://127.0.0.1:9180/?token=…`) hay un panel de

@@ -191,6 +191,7 @@ def test_the_deployment_files_exist():
         "deploy/docker-compose.yml",
         "deploy/docker-compose.lab.yml",
         "deploy/nullcell-relay.service",
+        "deploy/nullcell-portal.service",
         "deploy/install.sh",
         "docs/RELAY_OP.md",
         "docs/VPS.md",
@@ -418,3 +419,43 @@ def test_a_saved_peer_comes_back(tmp_path):
     back = load_peers(tmp_path / "peers.db")
     assert [n.pub for n in back] == [node.pub]
     assert back[0].endpoints == ["203.0.113.9:4433"]
+
+
+# ------------------------------------- M10: una Raspberry Pi, sin pantalla
+def test_the_portal_unit_runs_headless_with_a_deployment():
+    """`ncell desktop` necesita PySide6, que no publica ruedas para ARM, así
+    que en una Pi la única vía es `ncell node --config`. Una unidad que
+    invocara el escritorio fallaría al arrancar, en la máquina donde menos se
+    mira."""
+    unit = (ROOT / "deploy" / "nullcell-portal.service").read_text(encoding="utf-8")
+    assert "ncell node" in unit
+    assert "--config" in unit
+    assert "desktop" not in unit.split("[Service]")[1]
+
+
+def test_the_portal_unit_drains_before_exiting():
+    unit = (ROOT / "deploy" / "nullcell-portal.service").read_text(encoding="utf-8")
+    assert "KillSignal=SIGTERM" in unit
+    assert "TimeoutStopSec" in unit
+
+
+def test_the_portal_unit_runs_unprivileged_and_keeps_its_identity():
+    """La dirección .null *es* la clave (§3): si el estado no sobrevive al
+    reinicio, el portal cambia de nombre solo."""
+    unit = (ROOT / "deploy" / "nullcell-portal.service").read_text(encoding="utf-8")
+    assert "User=nullcell" in unit
+    assert "NoNewPrivileges=true" in unit
+    assert "StateDirectory=nullcell" in unit
+    assert "ReadWritePaths=/var/lib/nullcell" in unit
+
+
+def test_the_node_command_takes_a_deployment():
+    """El hueco que impedía desplegar en una Pi: toda la carpeta de despliegue
+    estaba cableada sólo al escritorio."""
+    import inspect
+
+    from nullcell.cli import main
+
+    source = inspect.getsource(main.cmd_node)
+    assert '"--config"' in source
+    assert "Deployment.load" in source
