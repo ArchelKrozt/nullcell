@@ -13,13 +13,24 @@ from nullcell.onion.path_select import (
     GUARD_LIFETIME,
     MIN_OBSERVED_AGE,
     GuardSet,
+    PathBuilder,
     PathError,
     RelayCandidate,
+    RelayDirectory,
     endpoint_prefix,
     select_path,
 )
 
 OLD = time.time() - MIN_OBSERVED_AGE - 60
+
+
+def directory_of(*relays) -> RelayDirectory:
+    """Un directorio con esos relevos, saltándose `ingest` (que exige un
+    registro firmado): aquí se prueba el mensaje, no la verificación."""
+    directory = RelayDirectory()
+    for relay in relays:
+        directory._relays[relay.pub] = relay  # noqa: SLF001
+    return directory
 
 
 def candidate(host: str, *, first_seen: float = OLD, pow_bits: int = 9) -> RelayCandidate:
@@ -219,3 +230,34 @@ def test_candidate_from_a_relay_descriptor():
         P.DIFFICULTY.clear()
         P.DIFFICULTY.update(original)
         P.shutdown_pool()
+
+
+# --------------------- M10: esperar y actuar son reacciones opuestas (§7)
+def test_the_message_says_waiting_is_useless_when_operators_are_missing(tmp_path):
+    """El mensaje culpaba siempre al suelo de antigüedad, también cuando lo
+    que faltaban eran operadores: le decía a alguien que esperara en el único
+    caso en que esperar no va a cambiar nada jamás."""
+    paths = PathBuilder(directory_of(candidate("62.171.160.130")), GuardSet(tmp_path / "g.json"))
+    message = paths.why_not_ready()
+    assert "esperar no basta" in message
+    assert "operador" in message
+    assert "antigüedad" not in message
+
+
+def test_the_message_says_to_wait_once_the_operators_are_there(tmp_path):
+    relays = [candidate(f"62.{171 + i}.160.130", first_seen=time.time()) for i in range(3)]
+    paths = PathBuilder(directory_of(*relays), GuardSet(tmp_path / "g.json"))
+    message = paths.why_not_ready()
+    assert "sólo hay que esperar" in message
+    assert "esperar no basta" not in message
+
+
+def test_no_relays_at_all_asks_for_a_seed(tmp_path):
+    paths = PathBuilder(RelayDirectory(), GuardSet(tmp_path / "g.json"))
+    assert "semilla" in paths.why_not_ready()
+
+
+def test_a_ready_directory_has_nothing_to_say(tmp_path):
+    relays = [candidate(f"62.{171 + i}.160.130", first_seen=OLD) for i in range(3)]
+    paths = PathBuilder(directory_of(*relays), GuardSet(tmp_path / "g.json"))
+    assert paths.why_not_ready() == ""

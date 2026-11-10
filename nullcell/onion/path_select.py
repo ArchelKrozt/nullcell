@@ -533,19 +533,47 @@ class PathBuilder:
             "why": self.why_not_ready(),
         }
 
-    def why_not_ready(self) -> str:
-        """A message that says what is missing, not just that something is."""
+    def why_not_ready(self, *, now: float | None = None) -> str:
+        """Qué falta, y sobre todo **si esperar sirve de algo**.
+
+        El mensaje anterior culpaba siempre al suelo de antigüedad, también
+        cuando lo que faltaban eran operadores. Eso le decía a alguien que
+        esperara en el único caso en el que esperar no va a cambiar nada
+        jamás, y esperar y actuar son reacciones opuestas.
+        """
+        now = time.time() if now is None else now
         total = len(self.directory)
-        usable = len(self.directory.usable(min_pow_bits=self.min_pow_bits))
         if total == 0:
-            return "no se conoce ningún relevo todavía: hace falta bootstrap (§7)"
-        if usable < CIRCUIT_LENGTH:
+            return "no se conoce ningún relevo todavía: hace falta una semilla (§7)"
+
+        usable = len(self.directory.usable(min_pow_bits=self.min_pow_bits, now=now))
+        if usable >= CIRCUIT_LENGTH:
+            return ""
+
+        # §7 cuenta operadores, no máquinas: diez relevos del mismo proveedor
+        # son un salto, no diez.
+        operators = len(
+            {
+                prefix
+                for c in self.directory.candidates(now=now)
+                if c.pow_bits >= self.min_pow_bits
+                for prefix in c.prefixes
+            }
+        )
+        if operators < CIRCUIT_LENGTH:
+            faltan = CIRCUIT_LENGTH - operators
             return (
-                f"{total} relevos conocidos, {usable} usables. §7 exige "
-                f"{MIN_OBSERVED_AGE / 60:.0f} min de antigüedad observada, así que "
-                "una celda recién instalada tiene que esperar"
+                f"{total} relevos en {operators} operador"
+                f"{'' if operators == 1 else 'es'} distinto"
+                f"{'' if operators == 1 else 's'}. §7 exige {CIRCUIT_LENGTH} operadores "
+                f"distintos, así que esperar no basta: faltan {faltan} más, "
+                "y tienen que ser de otra gente o de otro proveedor"
             )
-        return ""
+        return (
+            f"{total} relevos conocidos, {usable} usables. §7 exige "
+            f"{MIN_OBSERVED_AGE / 60:.0f} min de antigüedad observada, "
+            "así que ya sólo hay que esperar"
+        )
 
 
 def _hop_prefixes(hop: Hop) -> set[str]:
