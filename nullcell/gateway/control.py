@@ -266,30 +266,35 @@ class ControlPanel:
     async def add_seed(self, line: str) -> dict[str, Any]:
         """Join through somebody else's cell (§7: a seed is an introduction).
 
-        The single most useful thing a lone node can be told, which is why it
-        is a first-class action instead of a start-up flag.
+        Takes an invitation or a bare seed line, because asking somebody to
+        tell the two apart is asking them to understand a difference that does
+        not concern them.
         """
-        from nullcell.cli.relay import _parse_seed
+        from nullcell.core import invite
 
-        line = (line or "").strip()
-        node = _parse_seed(line)
-        if node is None:
-            raise ControlError(
-                "eso no parece una semilla. El formato es <dirección>@host:puerto, "
-                "tal cual lo imprime `ncell relay --print-seed`"
-            )
-        known = await self.runtime.node.bootstrap([line])
+        try:
+            invitation = invite.parse(line)
+        except invite.InviteError as bad:
+            raise ControlError(str(bad)) from None
+
+        known = await self.runtime.node.bootstrap(invitation.seeds)
         learned = await self.runtime.learn_relays()
         # Una semilla que funciona vale más recordada que pegada otra vez.
         if known and (remember := getattr(self.runtime, "remember_peers", None)):
             remember()
+        cuantas = len(invitation.seeds)
         return {
             "peers": known,
             "relays": learned,
+            "portal": invitation.portal,
             "detail": (
                 f"{known} celdas conocidas, {learned} relevos observados"
                 if known
-                else "no contestó: ¿está encendida esa celda y abierto su puerto UDP?"
+                else (
+                    "no contestó ninguna de las "
+                    + (f"{cuantas} celdas" if cuantas > 1 else "celda")
+                    + " de la invitación: ¿están encendidas y con su puerto UDP abierto?"
+                )
             ),
         }
 
@@ -301,6 +306,29 @@ class ControlPanel:
         from nullcell.cli.relay import seed_line
 
         return seed_line(self.runtime.identity, endpoints[0])
+
+    def invitation(self) -> str | None:
+        """One thing to copy: how to get in, and what to look at once inside.
+
+        Carries this cell's own seed plus a few of the relays it already
+        knows, so the invitation keeps working on a day this machine happens
+        to be off — and so no single cell sees everybody arrive.
+        """
+        from nullcell.core import invite
+
+        seeds: list[str] = []
+        if mine := self.seed_line():
+            seeds.append(mine)
+        for relay in self.runtime.directory.candidates()[: invite.MAX_SEEDS]:
+            endpoints = [e for e in relay.endpoints if reach_mod.classify(e) != "loopback"]
+            if endpoints and len(seeds) < invite.MAX_SEEDS:
+                seeds.append(f"{ids.encode_nid(relay.pub)}@{endpoints[0]}")
+        if not seeds:
+            return None
+        try:
+            return invite.build(seeds, portal=(self.portal or {}).get("name"))
+        except invite.InviteError:
+            return None
 
     # --------------------------------------------------------------- portales
     async def publish_folder(
@@ -481,6 +509,7 @@ class ControlPanel:
             "can_share": bool(self._reachable_endpoints()),
             "endpoints": self._relay_endpoints or self._reachable_endpoints(),
             "seed": self.seed_line(),
+            "invitation": self.invitation(),
             "reach": self.reach,
             "reach_detail": reach_mod.describe(self.reach),
             "paths_ready": bool(self.runtime.paths.ready),

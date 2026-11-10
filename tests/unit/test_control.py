@@ -68,8 +68,19 @@ class FakeIdentity:
     public_key = b"\x01" * 32
 
 
+class FakeDirectory:
+    """Los relevos que esta celda conoce. Vacío salvo que un test diga otra cosa."""
+
+    def __init__(self, relays=None) -> None:
+        self._relays = relays or []
+
+    def candidates(self, **kwargs):
+        return list(self._relays)
+
+
 class FakeRuntime:
-    def __init__(self, *, endpoints=None, ready: bool = True) -> None:
+    def __init__(self, *, endpoints=None, ready: bool = True, relays=None) -> None:
+        self.directory = FakeDirectory(relays)
         self.node = FakeNode(endpoints)
         self.publisher = FakePublisher()
         self.paths = FakePaths(ready)

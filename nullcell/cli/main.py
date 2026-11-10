@@ -683,6 +683,37 @@ def cmd_browse(
         typer.echo("\nparado")
 
 
+@app.command("invite")
+def cmd_invite(
+    announce: Annotated[
+        str, typer.Option("--announce", "-a", help="host:puerto público de esta celda")
+    ],
+    portal: Annotated[
+        str | None, typer.Option("--portal", help="nombre .null al que invitas")
+    ] = None,
+    extra: Annotated[
+        list[str] | None,
+        typer.Option("--seed", help="otra semilla a incluir; repetible"),
+    ] = None,
+) -> None:
+    """Imprime una invitación: una sola cosa que copiar para entrar (§7).
+
+    Lleva cómo entrar y, si lo pides, a qué portal. No es una credencial: no
+    firma nada y no avala nada, y todo lo aprendido a través de ella se
+    verifica por separado.
+    """
+    from nullcell.cli.relay import seed_line
+    from nullcell.core import invite
+
+    identity, _ = _load_identity()
+    seeds = [seed_line(identity, announce), *(extra or [])]
+    try:
+        typer.echo(invite.build(seeds, portal=portal))
+    except invite.InviteError as bad:
+        typer.secho(f"✗ {bad}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(2) from None
+
+
 # ------------------------------------------------ M9: el escritorio (§9)
 @app.command("desktop")
 def cmd_desktop(

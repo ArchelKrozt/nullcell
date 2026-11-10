@@ -281,6 +281,30 @@ una lista de arranque que alguien mantiene, es decir, una autoridad — exactame
 no quiere tener. Tor lo resuelve con autoridades de directorio incrustadas; aquí
 [`bootstrap.json`](bootstrap.json) está **vacío a propósito** mientras no exista una red pública.
 
+#### Invitaciones: una sola cosa que copiar
+
+```bash
+ncell invite --announce tu-servidor.com:4433 --portal nullcell
+# nullcell://join?s=kopxc7…3fab@tu-servidor.com:4433&p=nullcell
+```
+
+Lleva **cómo entrar** y **a qué portal**, en una línea. El panel acepta esto o una semilla suelta
+en la misma casilla, porque pedirle a alguien que distinga entre las dos es pedirle que entienda
+una diferencia que no le importa.
+
+Tres decisiones, cada una con su motivo:
+
+- **Es legible, no base64.** Quien la recibe ve a qué celdas le dicen que se conecte *antes* de
+  pegarla. La primera conexión es directa y revela su IP: una invitación opaca pediría confianza
+  ciega justo donde más caro sale.
+- **Lleva varias semillas.** Una sola es un punto único de fallo, y también una forma de que una
+  celda concreta vea entrar a todo el mundo.
+- **No es una credencial.** No firma nada y no avala nada; todo lo aprendido a través de ella se
+  verifica por separado (§7). Eso es lo que impide que repartir invitaciones cree autoridades.
+
+El botón del panel genera la tuya con tu semilla **más algunos relevos que ya conoces**, para que
+siga funcionando un día que tu máquina esté apagada.
+
 Lo que sí es automático, desde ahora: **entras una vez y ya**. La celda guarda a quién conoció
 —incluso si el proceso muere de golpe— y al volver a abrirla rejunta sola, sin semilla.
 

@@ -141,8 +141,14 @@ async function refresh() {
     } else {
       note("share-note", "", false);
     }
-    $("copy-seed").hidden = !control.seed;
-    $("copy-seed").dataset.seed = control.seed || "";
+    // La invitación lleva varias semillas y el portal; la línea suelta es el
+    // respaldo cuando todavía no hay nada más que ofrecer.
+    const compartible = control.invitation || control.seed || "";
+    $("copy-seed").hidden = !compartible;
+    $("copy-seed").dataset.seed = compartible;
+    $("copy-seed").textContent = control.invitation
+      ? "Copiar mi invitación, para que otros entren"
+      : "Copiar mi semilla, para que otros entren";
 
     // Publicar NO exige red: se sirve local y sale solo. El navegador sí.
     $("browse").disabled = !control.paths_ready;
@@ -177,7 +183,8 @@ $("seed-add").addEventListener("click", async () => {
   $("seed-add").disabled = true;
   try {
     const result = await post("/api/control/seed", { seed: line });
-    note("seed-note", result.detail, !result.peers);
+    const extra = result.portal ? ` · te invitan a ${result.portal}.null` : "";
+    note("seed-note", result.detail + extra, !result.peers);
     if (result.peers) input.value = "";
   } catch (error) {
     note("seed-note", error.message, true);
@@ -194,8 +201,8 @@ $("copy-seed").addEventListener("click", async (event) => {
   const seed = event.target.dataset.seed;
   try {
     await navigator.clipboard.writeText(seed);
-    note("share-note", "Semilla copiada. Dásela a quien quieras que entre: no es un secreto " +
-      "ni avala nada (§7).", false);
+    note("share-note", "Copiado. Dáselo a quien quieras que entre: no es un secreto ni avala " +
+      "nada, sólo es una presentación (§7).", false);
   } catch {
     note("share-note", seed, false);  // sin portapapeles, al menos a la vista
   }
