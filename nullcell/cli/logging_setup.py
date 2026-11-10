@@ -23,11 +23,19 @@ from typing import Final
 
 __all__ = ["LEVELS", "setup"]
 
+#: Se aceptan las dos ortografías de cada nivel. La tabla tenía `warn` y no
+#: `warning`, y el escritorio pedía `warning`: caía al valor por defecto —INFO—
+#: **en silencio**, así que una app de escritorio escupía sus líneas internas
+#: en la terminal de quien la abría con doble clic. Un nivel que no existe se
+#: avisa ahora en lugar de sustituirse calladamente.
 LEVELS: Final[dict[str, int]] = {
     "debug": logging.DEBUG,
     "info": logging.INFO,
     "warn": logging.WARNING,
+    "warning": logging.WARNING,
     "error": logging.ERROR,
+    "critical": logging.CRITICAL,
+    "quiet": logging.CRITICAL,
 }
 
 _FORMAT: Final[str] = "%(asctime)s %(levelname)-5s %(name)-18s %(message)s"
@@ -60,7 +68,8 @@ class _NoAddresses(logging.Filter):
 
 def setup(level: str = "info", *, journal: bool | None = None) -> None:
     """Configure logging once, for the whole process."""
-    resolved = LEVELS.get(level.lower(), logging.INFO)
+    wanted = (level or "").lower().strip()
+    resolved = LEVELS.get(wanted, logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
 
     # Under systemd or Docker the timestamp is added by the collector, so
@@ -80,6 +89,16 @@ def setup(level: str = "info", *, journal: bool | None = None) -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(resolved)
+
+    if wanted and wanted not in LEVELS:
+        # Después de configurar, para que se vea: un nivel mal escrito que se
+        # sustituye sin decir nada deja a alguien creyendo que pidió silencio.
+        log = logging.getLogger("nullcell")
+        log.warning(
+            "nivel de registro desconocido: %r. Se usa 'info'. Válidos: %s",
+            level,
+            ", ".join(sorted(LEVELS)),
+        )
 
     # aioquic and asyncio are chatty at debug and have nothing to say at info.
     for noisy in ("aioquic", "asyncio", "aiohttp.access"):

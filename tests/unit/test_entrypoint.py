@@ -104,3 +104,34 @@ def test_an_interpreter_without_the_package_hands_over_to_one_that_has_it():
     )
     assert done.returncode == 0, done.stderr[-600:]
     assert "barra de menús" in done.stdout or "desktop" in done.stdout
+
+
+# --------------------------------- M10: el icono de la bandeja en macOS
+def test_the_tray_icon_has_no_context_menu_attached():
+    """En macOS, un icono de bandeja con menú abre el menú al hacer clic
+    izquierdo y **la señal `activated` no se emite nunca**: pulsar NULL daba
+    un menú diminuto en lugar del panel, y el panel —que es toda la interfaz—
+    parecía no existir. El menú se muestra a mano, sólo con el clic derecho.
+    """
+    source = (ROOT / "nullcell" / "desktop" / "app.py").read_text(encoding="utf-8")
+    # La llamada, no la palabra: el comentario que explica por qué no se usa
+    # contiene el nombre, y buscarlo a secas convertía la explicación en un
+    # fallo.
+    assert "tray.setContextMenu(" not in source
+    assert "ActivationReason.Context" in source
+
+
+def test_the_panel_is_not_a_popup():
+    """Un Popup se cierra en cuanto pierde el foco, así que mostrarlo desde un
+    menú que se estaba cerrando lo cerraba en el mismo gesto."""
+    source = (ROOT / "nullcell" / "desktop" / "app.py").read_text(encoding="utf-8")
+    assert "Qt.WindowType.Tool" in source
+    assert "Qt.WindowType.Popup" not in source
+
+
+def test_declining_a_deployment_is_remembered():
+    """Preguntar en cada arranque a quien ya dijo que no es insistir, no
+    ayudar: publicar un portal es opcional y mucha gente sólo navega."""
+    source = (ROOT / "nullcell" / "desktop" / "app.py").read_text(encoding="utf-8")
+    assert "sin-despliegue" in source
+    assert "Borra este fichero" in source, "y hay que decir cómo deshacerlo"

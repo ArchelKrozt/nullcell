@@ -15,7 +15,10 @@ from typing import Final
 #: mirrored here because Qt widgets are not styled by the page's CSS.
 STYLE: Final[str] = """
 QWidget { background: #07090d; color: #e6edf3;
-          font-family: "SF Mono", Menlo, monospace; font-size: 12px; }
+          /* Menlo primero: "SF Mono" no es un nombre de familia que Qt
+             resuelva, y pedirlo imprimía un aviso en la consola en cada
+             arranque —ruido que parece un error y no lo es. */
+          font-family: Menlo, Monaco, monospace; font-size: 12px; }
 QLineEdit {
   background: #0d1117; border: 1px solid #1d2733; border-radius: 3px;
   padding: 6px 10px; color: #e6edf3; selection-background-color: #22d3ee;

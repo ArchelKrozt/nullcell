@@ -459,3 +459,39 @@ def test_the_node_command_takes_a_deployment():
     source = inspect.getsource(main.cmd_node)
     assert '"--config"' in source
     assert "Deployment.load" in source
+
+
+# ------------------------------- M10: el nivel de registro que no existía
+def test_both_spellings_of_every_level_work():
+    """La tabla tenía `warn` y no `warning`, y el escritorio pedía `warning`:
+    caía al valor por defecto —INFO— **en silencio**, así que una app abierta
+    con doble clic escupía sus líneas internas en la terminal."""
+    assert LEVELS["warning"] == LEVELS["warn"] == logging.WARNING
+    assert LEVELS["info"] == logging.INFO
+
+
+def test_the_desktop_default_is_actually_quiet():
+    """Y que el valor por defecto del comando exista en la tabla, que es lo
+    que falló: la ortografía natural no hacía nada."""
+    import inspect
+
+    from nullcell.cli import main
+
+    source = inspect.getsource(main.cmd_desktop)
+    default = source.split('typer.Option("--log-level")] = "')[1].split('"')[0]
+    assert default in LEVELS, f"el nivel por defecto {default!r} no existe en LEVELS"
+    assert LEVELS[default] >= logging.WARNING
+
+
+def test_an_unknown_level_is_reported_not_swallowed(capsys):
+    """Un nivel mal escrito que se sustituye sin decir nada deja a alguien
+    creyendo que pidió silencio. Es exactamente cómo se escondió el fallo.
+
+    Con `capsys` y no `caplog`: `setup()` vacía los manejadores de la raíz —es
+    su trabajo— y entre ellos está el que `caplog` instala, así que el aviso
+    se emite por el manejador nuevo, hacia la salida estándar."""
+    try:
+        setup("disparate")
+        assert "desconocido" in capsys.readouterr().out
+    finally:
+        setup("info")  # dejarlo como estaba para el resto de la suite

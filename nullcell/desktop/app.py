@@ -89,10 +89,11 @@ def _build_panel(node: NodeThread, shell: Any):
             return True
 
     window = QWidget()
+    # `Tool` y no `Popup`: un Popup se cierra en cuanto pierde el foco, así
+    # que mostrarlo desde un menú que se estaba cerrando lo cerraba en el
+    # mismo gesto — el panel aparecía y desaparecía sin que se viera.
     window.setWindowFlags(
-        Qt.WindowType.Popup
-        | Qt.WindowType.FramelessWindowHint
-        | Qt.WindowType.NoDropShadowWindowHint
+        Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
     )
     window.setFixedSize(PANEL_WIDTH, PANEL_HEIGHT)
     layout = QVBoxLayout(window)
@@ -114,6 +115,7 @@ class Shell:
         self.panel: Any = None
         self.tray: Any = None
         self.browser: Any = None
+        self.menu: Any = None
 
     # -------------------------------------------------------------- bridge
     def perform(self, action: str) -> None:
@@ -178,6 +180,14 @@ class Shell:
         if self.node._deployment() is not None:  # noqa: SLF001
             return
 
+        # Preguntar en cada arranque a quien ya dijo que no es insistir, no
+        # ayudar: publicar un portal es opcional y mucha gente sólo navega.
+        from nullcell.core import config
+
+        asked = config.home() / "sin-despliegue"
+        if asked.exists():
+            return
+
         box = QMessageBox()
         box.setWindowTitle("Nullcell")
         box.setText("¿Tienes una carpeta de despliegue?")
@@ -196,6 +206,19 @@ class Shell:
             self._locate_deployment()
         elif clicked is create:
             self._create_deployment()
+        else:
+            # Recordado, con una nota de cómo deshacerlo: un «ahora no» que no
+            # se recuerda es la misma pregunta mañana.
+            try:
+                asked.parent.mkdir(parents=True, exist_ok=True)
+                asked.write_text(
+                    "Dijiste que no querías publicar un portal, así que Nullcell dejó de\n"
+                    "preguntar. Borra este fichero, o usa `ncell desktop --config <carpeta>`,\n"
+                    "para volver a configurarlo.\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass  # no poder recordarlo no debe impedir arrancar
 
     def _locate_deployment(self) -> None:
         from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -311,6 +334,7 @@ def run(**options: Any) -> int:
     shell.offer_deployment()
     shell.panel = _build_panel(node, shell)
     from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QCursor
 
     shell.panel.view.load(QUrl(url))
 
@@ -321,9 +345,21 @@ def run(**options: Any) -> int:
     menu.addAction("Navegador", shell.open_browser)
     menu.addSeparator()
     menu.addAction("Salir", shell.quit)
-    tray.setContextMenu(menu)
-    tray.activated.connect(shell.toggle_panel)
+
+    # **Sin `setContextMenu`.** En macOS, un icono de bandeja con menú abre el
+    # menú al hacer clic izquierdo y la señal `activated` no se emite nunca:
+    # pulsar NULL daba un menú diminuto en lugar del panel, y el panel —que es
+    # toda la interfaz— parecía no existir. Así que el menú se muestra a mano,
+    # sólo con el clic derecho.
+    def clicked(reason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.Context:
+            menu.popup(QCursor.pos())
+        else:
+            shell.toggle_panel()
+
+    tray.activated.connect(clicked)
     tray.show()
+    shell.menu = menu  # vivo mientras viva el shell, o Qt lo recolecta
     shell.tray = tray
 
     return app.exec()
