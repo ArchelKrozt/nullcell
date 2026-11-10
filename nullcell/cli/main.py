@@ -738,6 +738,55 @@ def cmd_browse(
         typer.echo("\nparado")
 
 
+@app.command("launcher")
+def cmd_launcher(
+    config_dir: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="carpeta de despliegue que usará el lanzador"),
+    ] = None,
+    announce: Annotated[
+        str | None, typer.Option("--announce", help="host:puerto público, para poder ser relevo")
+    ] = None,
+) -> None:
+    """Crea un acceso de escritorio para abrir Nullcell con doble clic.
+
+    La línea de comandos sigue igual: esto no la sustituye. Pero pedirle a
+    alguien que abra una terminal y recuerde una ruta para usar un programa de
+    escritorio es pedirle que haga de instalador.
+    """
+    from nullcell.cli import launcher as launcher_mod
+
+    extra: list[str] = []
+    if config_dir:
+        extra += ["--config", str(Path(config_dir).expanduser().resolve())]
+    if announce:
+        extra += ["--announce", announce]
+
+    try:
+        made = launcher_mod.create(extra)
+    except OSError as exc:
+        typer.secho(f"✗ no se pudo crear el lanzador: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from None
+
+    typer.secho(f"✓ {made.kind} creado en {made.path}", fg=typer.colors.GREEN)
+    if made.note:
+        typer.echo(f"  {made.note}")
+    # `find_spec` y no un `import`: esto sólo pregunta si está disponible, y
+    # escribirlo como import hacía que el paquete base pareciera depender de
+    # un extra opcional —lo dijo el test de empaquetado antes de que llegara a
+    # romperle una instalación a nadie.
+    import importlib.util
+
+    if importlib.util.find_spec("PySide6") is None:
+        typer.secho(
+            "⚠  El escritorio necesita PySide6 y no está instalado, así que el "
+            "lanzador mostrará un error al abrirlo:\n"
+            "     pip install 'nullcell[desktop]'",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+
+
 @app.command("update")
 def cmd_update(
     check: Annotated[

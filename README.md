@@ -167,6 +167,26 @@ pip install 'nullcell[desktop]'
 ncell desktop
 ```
 
+### Sin escribir nada: doble clic
+
+En la carpeta del proyecto hay dos ficheros equivalentes al comando de arriba:
+
+| fichero | para qué |
+|---|---|
+| [`Nullcell.command`](Nullcell.command) | doble clic en macOS: lo abre la Terminal |
+| [`nullcell-escritorio.py`](nullcell-escritorio.py) | `python3 nullcell-escritorio.py`, o ábrelo con la app de Python |
+
+La línea de comandos no cambia ni desaparece: esto es otra puerta a la misma habitación.
+
+> **Si lo abres con la app de Python, se relanza solo.** Un `.py` abierto así se ejecuta con el
+> Python del sistema, no con el entorno donde están las dependencias, y el resultado sería un
+> `ModuleNotFoundError` en una ventana que se cierra sola. El script busca un intérprete que sirva
+> y vuelve a arrancar con él; si no encuentra ninguno, lo dice en una ventana y explica cómo
+> instalarlo, en vez de desaparecer.
+
+También hay `ncell launcher`, que crea un `Nullcell.app` en `~/Applications` — mismo resultado sin
+ventana de Terminal detrás.
+
 Aparece un icono **NULL** en la barra de menús. Al pulsarlo se abre un panel con:
 
 - un **interruptor** para compartir ancho de banda, que dice la verdad sobre la asimetría: activarlo
