@@ -276,6 +276,7 @@ class ControlPanel:
         tell the two apart is asking them to understand a difference that does
         not concern them.
         """
+        from nullcell.cli.relay import _parse_seed
         from nullcell.core import invite
 
         try:
@@ -283,8 +284,20 @@ class ControlPanel:
         except invite.InviteError as bad:
             raise ControlError(str(bad)) from None
 
-        known = await self.runtime.node.bootstrap(invitation.seeds)
-        learned = await self.runtime.learn_relays()
+        # `bootstrap` quiere objetos `Node`, no texto. Pasarle las cadenas
+        # hacía que reventara en `seed.pub` con un AttributeError que salía
+        # como un HTTP 500: la casilla de semillas del panel —lo que más
+        # necesita una celda sola— no había funcionado nunca.
+        nodes = [node for raw in invitation.seeds if (node := _parse_seed(raw)) is not None]
+        if not nodes:
+            raise ControlError("ninguna de esas semillas se pudo interpretar")
+
+        try:
+            known = await self.runtime.node.bootstrap(nodes)
+            learned = await self.runtime.learn_relays()
+        except Exception as exc:  # noqa: BLE001 - se enseña, no se traga
+            log.warning("el bootstrap falló: %s", exc, exc_info=True)
+            raise ControlError(f"no se pudo entrar con esa semilla: {exc}") from None
         # Una semilla que funciona vale más recordada que pegada otra vez.
         if known and (remember := getattr(self.runtime, "remember_peers", None)):
             remember()

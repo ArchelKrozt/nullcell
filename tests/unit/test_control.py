@@ -60,6 +60,19 @@ class FakePublisher:
 class FakeNode:
     def __init__(self, endpoints=None) -> None:
         self.endpoints = endpoints if endpoints is not None else []
+        self.bootstrapped: list = []
+
+    async def bootstrap(self, seeds):
+        """Como el de verdad: lee `seed.pub`, así que un texto revienta aquí.
+
+        Ese era el fallo: el panel le pasaba cadenas y el AttributeError salía
+        como un HTTP 500, de modo que añadir una semilla —lo que más necesita
+        una celda sola— no había funcionado nunca.
+        """
+        for seed in seeds:
+            _ = seed.pub
+        self.bootstrapped.extend(seeds)
+        return len(seeds)
 
 
 class FakeIdentity:
@@ -86,6 +99,9 @@ class FakeRuntime:
         self.paths = FakePaths(ready)
         self.identity = FakeIdentity()
         self.tasks: list = []
+
+    async def learn_relays(self, peers=None):
+        return len(self.node.bootstrapped)
 
     def spawn(self, coroutine):
         import asyncio
@@ -541,3 +557,58 @@ async def test_you_can_join_and_talk_before_there_is_any_network(tmp_path):
 async def test_speaking_without_a_channel_is_refused():
     with pytest.raises(ControlError, match="ningún canal"):
         await panel().say("hola")
+
+
+# ------------------------------------------- M10: añadir una semilla (§7)
+def seed_line_for(endpoint: str = "62.171.160.130:4433") -> str:
+    from nullcell.core import ids
+    from nullcell.core.identity import Identity
+
+    return f"{Identity.generate().hostname.removesuffix(ids.SUFFIX)}@{endpoint}"
+
+
+async def test_a_seed_reaches_bootstrap_as_a_node_not_as_text():
+    """El fallo que salía como HTTP 500: `bootstrap` quiere objetos `Node` y
+    recibía cadenas, así que reventaba en `seed.pub`."""
+    from nullcell.dht.routing_table import Node
+
+    p = panel(endpoints=["192.168.1.5:4433"])
+    result = await p.add_seed(seed_line_for())
+
+    assert result["peers"] == 1
+    assert p.runtime.node.bootstrapped, "no llegó nada a bootstrap"
+    assert all(isinstance(n, Node) for n in p.runtime.node.bootstrapped)
+
+
+async def test_an_invitation_adds_every_seed_it_carries():
+    from nullcell.core import invite
+
+    p = panel(endpoints=["192.168.1.5:4433"])
+    text = invite.build([seed_line_for(), seed_line_for("203.0.113.9:4433")], portal="nullcell")
+    result = await p.add_seed(text)
+
+    assert len(p.runtime.node.bootstrapped) == 2
+    assert result["portal"] == "nullcell"
+
+
+async def test_nonsense_is_refused_with_a_reason_not_a_crash():
+    """Un 500 en el panel es un fallo del programa, no del dato."""
+    p = panel(endpoints=["192.168.1.5:4433"])
+    for bad in ("", "   ", "no-es-una-semilla", "alguien@sinpuerto"):
+        with pytest.raises(ControlError):
+            await p.add_seed(bad)
+    assert not p.runtime.node.bootstrapped
+
+
+async def test_a_failing_bootstrap_is_explained_not_a_500():
+    class Rota(FakeNode):
+        async def bootstrap(self, seeds):
+            raise OSError("la red no responde")
+
+    import tempfile
+
+    runtime = FakeRuntime(endpoints=["192.168.1.5:4433"])
+    runtime.node = Rota(["192.168.1.5:4433"])
+    p = ControlPanel(runtime, home=pathlib.Path(tempfile.mkdtemp()))
+    with pytest.raises(ControlError, match="no se pudo entrar"):
+        await p.add_seed(seed_line_for())
