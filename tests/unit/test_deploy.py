@@ -358,3 +358,63 @@ def test_the_lab_relays_share_one_subnet_so_they_can_find_each_other():
     for name, service in compose["services"].items():
         address = ipaddress.ip_address(service["networks"]["lab"]["ipv4_address"])
         assert address in subnet, f"{name} ({address}) fuera de {subnet}"
+
+
+# ----------------------------- M9: entrar una vez, y ya (§1, §7)
+def test_the_desktop_remembers_who_it_met():
+    """It did not, and that is the difference between "you join once" and "you
+    join every time".
+
+    `ncell node`, `relay` and `browse` all went through `_seeds()`, which reads
+    `bootstrap.json` and the peers saved last session. The desktop bootstrapped
+    only from `--seed`: paste a seed, find cells, close the window, and it woke
+    up knowing nobody.
+    """
+    import inspect
+
+    from nullcell.desktop import node_thread
+
+    source = inspect.getsource(node_thread)
+    for piece in ("load_bootstrap", "load_peers", "save_peers"):
+        assert piece in source, f"el escritorio no usa {piece}"
+
+
+def test_peers_are_saved_as_soon_as_there_are_any(tmp_path):
+    """Not only on the way out. A desktop app does not always die where you
+    expect — a SIGTERM takes the node's thread without passing through the
+    orderly shutdown — and measured that way everything learned was lost."""
+    import inspect
+
+    from nullcell.desktop import node_thread
+
+    body = inspect.getsource(node_thread.NodeThread._serve)
+    bootstrap = body.index("bootstrap(")
+    saved = body.index("_save_peers()")
+    assert saved > bootstrap, "hay que guardar después de conocer a alguien"
+    assert saved < body.index("await self._stop.wait()"), (
+        "guardar sólo al salir pierde todo si el proceso muere de otra forma"
+    )
+
+
+def test_saving_peers_without_a_node_is_quiet_and_harmless(tmp_path):
+    """`_save_peers` reads `self.runtime`, which is set while the node starts.
+    Calling it too early raised inside a broad `except` and the save silently
+    did nothing — which is exactly how this bug hid."""
+    from nullcell.desktop.node_thread import NodeThread
+
+    thread = NodeThread()
+    thread.peers_path = tmp_path / "peers.db"
+    thread._save_peers()  # noqa: SLF001
+    assert not (tmp_path / "peers.db").exists()
+
+
+def test_a_saved_peer_comes_back(tmp_path):
+    from nullcell.core.identity import Identity
+    from nullcell.dht.routing_table import Node
+    from nullcell.discovery.bootstrap import load_peers, save_peers
+
+    node = Node(pub=Identity.generate().public_key, endpoints=["203.0.113.9:4433"])
+    save_peers(tmp_path / "peers.db", [node])
+    back = load_peers(tmp_path / "peers.db")
+    assert [n.pub for n in back] == [node.pub]
+    assert back[0].endpoints == ["203.0.113.9:4433"]

@@ -267,6 +267,27 @@ El atajo vale **sólo para tu dirección y tu nombre declarado**, y ese límite 
 cualquier otro destino pasa por los circuitos, o esto se convertiría en una forma de servir algo
 local bajo el nombre de otro.
 
+### ¿Puede otro ordenador encontrar tu portal solo?
+
+**El nombre sí; la red no.** Conviene separarlo porque son dos cosas:
+
+- Una vez dentro, `nullcell.null` se resuelve **automáticamente** por el DHT, sin configurar nada.
+  Eso ya funciona.
+- Pero **entrar** no es automático: una celda recién instalada no conoce a nadie y **no hay
+  descubrimiento global**. Necesita una **semilla**, y alguien se la tiene que dar.
+
+Eso no es una pieza que falte, es la decisión central del diseño: un descubrimiento global sería
+una lista de arranque que alguien mantiene, es decir, una autoridad — exactamente lo que Nullcell
+no quiere tener. Tor lo resuelve con autoridades de directorio incrustadas; aquí
+[`bootstrap.json`](bootstrap.json) está **vacío a propósito** mientras no exista una red pública.
+
+Lo que sí es automático, desde ahora: **entras una vez y ya**. La celda guarda a quién conoció
+—incluso si el proceso muere de golpe— y al volver a abrirla rejunta sola, sin semilla.
+
+> **Tu Mac no necesita IP pública para publicar.** Un portal se alcanza por puntos de enlace y un
+> punto de encuentro, así que sirve detrás de NAT sin abrir ningún puerto (§0). Lo que sí hace
+> falta es que **existan relevos** por los que construir los circuitos.
+
 ### Qué ve alguien si apagas la máquina
 
 El nombre no se pierde: el registro `NAME` sigue apuntando a tu clave. Lo que caduca —en una hora—

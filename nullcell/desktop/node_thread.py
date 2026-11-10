@@ -53,6 +53,7 @@ class NodeThread:
         self.reach: str = "unknown"
         self.deployment_error: str | None = None
         self._deployment_cache: Any = False  # False = aún no se ha buscado
+        self.peers_path: Path | None = None
         self.token: str | None = None
         self.error: BaseException | None = None
         self.identity: Any = None
@@ -137,10 +138,29 @@ class NodeThread:
         endpoints = [endpoint]
 
         runtime = Runtime.assemble(identity, home, endpoints=endpoints)
+        # Publicado de inmediato, no al final: el guardado de pares ocurre
+        # justo después del bootstrap y lo leía de aquí, así que asignarlo
+        # tarde hacía que ese guardado fallara —en silencio, porque el
+        # `except` que lo protege de morir al salir también se tragaba esto.
+        self.runtime = runtime
         await runtime.listen(self.host, self.port)
-        if self.seeds:
-            await runtime.node.bootstrap(self.seeds)
+        # El escritorio no cargaba bootstrap.json ni los pares guardados, y
+        # nunca los guardaba: pegabas una semilla, encontrabas celdas, cerrabas
+        # y al volver a abrir empezaba de cero. Es la diferencia entre "entras
+        # una vez" y "entras una vez y ya".
+        from nullcell.discovery.bootstrap import load_bootstrap, load_peers
+
+        self.peers_path = cfg.path_peers
+        known = list(load_bootstrap()) + list(load_peers(self.peers_path))
+        if known or self.seeds:
+            found = await runtime.node.bootstrap(known + list(self.seeds))
+            log.info("bootstrap: %d celdas conocidas", found)
             await runtime.learn_relays()
+            # Guardado **aquí**, no sólo al salir ni cada dos minutos: una app
+            # de escritorio no siempre muere por donde uno espera —un SIGTERM
+            # se lleva el hilo del nodo sin pasar por el cierre ordenado— y
+            # medido así, lo aprendido se perdía entero.
+            self._save_peers()
 
         bus = EventBus()
         runtime.open_index()
@@ -160,6 +180,8 @@ class NodeThread:
         self.url = f"http://127.0.0.1:{self.hud_port}/panel?token={ui.token}"
         self.panel = panel
         self.runtime = runtime
+        # Para que el panel pueda pedir que se recuerde lo aprendido.
+        runtime.remember_peers = self._save_peers
         bus.emit("node.up", f"{identity.short} en [{self.host}]:{self.port}")
         # `extra={"public": True}` for the same reason the relay's seed line
         # needed it: §12's filter drops any long line with an IP and a port in
@@ -180,11 +202,43 @@ class NodeThread:
         runtime.spawn(runtime.keep_portals_fresh())
         self._ready.set()
 
+        runtime.spawn(self._remember_peers())
         try:
             await self._stop.wait()
         finally:
+            self._save_peers()
             await ui.close()
             await runtime.close()
+
+    def _save_peers(self, path: Path | None = None) -> None:
+        """Write down who answered, so the next start needs no seed."""
+        from nullcell.discovery.bootstrap import save_peers
+
+        path = path or self.peers_path
+        if path is None:
+            return
+        runtime = getattr(self, "runtime", None)
+        if runtime is None:
+            log.debug("todavía no hay nodo del que recordar pares")
+            return
+        try:
+            nodes = [n for n in runtime.node.table.all_nodes() if n.endpoints]
+        except Exception as exc:  # noqa: BLE001 - guardar nunca debe impedir salir
+            log.warning("no se pudieron listar los pares: %s", exc)
+            return
+        if not nodes:
+            return
+        try:
+            save_peers(path, nodes)
+            log.info("%d celdas recordadas para el próximo arranque", len(nodes))
+        except OSError as exc:
+            log.warning("no se pudieron guardar los pares: %s", exc)
+
+    async def _remember_peers(self, interval: float = 60.0) -> None:
+        """Periodically, not only on exit: a crash should not cost the network."""
+        while True:
+            await asyncio.sleep(interval)
+            self._save_peers()
 
     # ----------------------------------------------------------- despliegue
     def _deployment(self):

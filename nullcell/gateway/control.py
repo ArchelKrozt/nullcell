@@ -280,6 +280,9 @@ class ControlPanel:
             )
         known = await self.runtime.node.bootstrap([line])
         learned = await self.runtime.learn_relays()
+        # Una semilla que funciona vale más recordada que pegada otra vez.
+        if known and (remember := getattr(self.runtime, "remember_peers", None)):
+            remember()
         return {
             "peers": known,
             "relays": learned,
