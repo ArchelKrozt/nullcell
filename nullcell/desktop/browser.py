@@ -97,7 +97,13 @@ class NullSchemeHandler(QWebEngineUrlSchemeHandler):
 
         async def work() -> None:
             try:
-                fetched = await self._fetcher_for().fetch(host, path)
+                # Tu propio portal no necesita circuito: eres los dos extremos.
+                panel = getattr(self.node, "panel", None)
+                local = panel.local_url_for(host) if panel is not None else None
+                if local:
+                    fetched = await self._fetcher_for().fetch_local(local, path)
+                else:
+                    fetched = await self._fetcher_for().fetch(host, path)
             except Exception as exc:  # noqa: BLE001 - every failure is shown
                 log.info("null://%s%s falló: %s", host[:10], path, exc)
                 title, detail = failures.explain(exc, host)
@@ -209,14 +215,11 @@ class BrowserWindow(QWidget):
             self.view.load(QUrl(home))
 
     def _go(self) -> None:
-        from nullcell.core import ids
-
         text = self.bar.text().strip()
         if not text:
             return
-        bare = ids.parse_hostname(text)
-        if bare:
-            self.view.load(QUrl(f"null://{bare}/"))
+        if destination := chrome.is_destination(text):
+            self.view.load(QUrl(f"null://{destination}/"))
             return
         # Not an address, so it is a search. §8's Oráculo answers it, on this
         # node's own origin.
@@ -228,12 +231,20 @@ class BrowserWindow(QWidget):
     def _url_changed(self, url: QUrl) -> None:
         text = url.toString()
         kind, label = chrome.kind_of(text)
+        # Tu propio portal servido sin red es legítimo y no es lo mismo que
+        # alcanzarlo por la red: decirlo evita creer que ya es visitable.
+        panel = getattr(self.node, "panel", None)
+        if kind == "portal" and panel is not None and panel.local_url_for(url.host()):
+            kind, label = "local", "tu portal · local"
         self.kind.setText(label)
         self.kind.setProperty("kind", kind)
         self.kind.style().unpolish(self.kind)
         self.kind.style().polish(self.kind)
-        # The token is ours and belongs in no address bar.
-        self.bar.setText("" if kind == "local" else text)
+        # The token is ours and belongs in no address bar — but that is about
+        # the dashboard's http URL, not about a null:// portal. Clearing on
+        # "local" blanked the very address the person had just typed.
+        carries_token = url.scheme() in ("http", "https")
+        self.bar.setText("" if carries_token else text)
 
     def _load_finished(self, ok: bool) -> None:
         stats = getattr(self.handler, "_fetcher", None)

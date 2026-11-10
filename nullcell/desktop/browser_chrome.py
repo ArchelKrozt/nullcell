@@ -38,6 +38,35 @@ QLabel#status { color: #7d8da3; font-size: 10px; padding: 3px 10px; }
 """
 
 
+def is_destination(text: str) -> str | None:
+    """The portal *text* names, or None if it should be searched for instead.
+
+    `ids.parse_hostname` only strips the suffix and lowercases — it does not
+    validate — so using it alone to decide made the address bar treat
+    "recetas de pan" as a portal and left the search box as dead code.
+
+    Two things count as naming a portal, and nothing else does:
+
+    * an explicit `.null` suffix, which is somebody saying where they want to
+      go rather than what they want to find;
+    * a bare 56-character address, which cannot be mistaken for words.
+    """
+    from nullcell.core import ids
+
+    cleaned = text.strip().rstrip(".")
+    if not cleaned or " " in cleaned:
+        return None
+
+    bare = ids.parse_hostname(cleaned)
+    if cleaned.lower().endswith((ids.SUFFIX_ALT, ids.SUFFIX)):
+        return bare or None
+    try:
+        ids.decode_nid(bare)
+    except Exception:  # noqa: BLE001 - cualquier fallo significa "no es una dirección"
+        return None
+    return bare
+
+
 def kind_of(url: str) -> tuple[str, str]:
     """What the address bar should say about *url*: (kind, label)."""
     if url.startswith("null://"):

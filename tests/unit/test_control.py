@@ -423,3 +423,39 @@ def test_a_lan_cell_can_share_and_is_told_what_that_means():
 def test_the_furthest_endpoint_decides_how_far_the_cell_reaches():
     p = panel(endpoints=["127.0.0.1:4433", "8.8.8.8:4433"])
     assert p.describe()["reach"] == "internet"
+
+
+# ------------------------------- M9: visitar tu propio portal sin red (§8)
+async def test_your_own_portal_is_reachable_without_a_circuit(tmp_path):
+    """Visiting your own site needs no circuit: you are both ends, so there is
+    no third party and nothing to anonymise.
+
+    Without this, typing your own name on a one-node network answered «ese
+    nombre no existe en la red» — about a portal running on that very machine.
+    """
+    (tmp_path / "index.html").write_text("<h1>hola</h1>")
+    p = panel(ready=False)
+    await p.publish_folder(tmp_path, name="nullcell")
+    try:
+        address = p.runtime.identity.hostname
+        for asked in ("nullcell", "nullcell.null", "NULLCELL.null", address, address[:-5]):
+            assert p.local_url_for(asked), f"no reconoció {asked!r} como propio"
+    finally:
+        await p.unpublish()
+
+
+async def test_the_shortcut_does_not_apply_to_anybody_else(tmp_path):
+    """The whole safety of it. Any other host must go through the circuits, or
+    this becomes a way to serve something local under somebody else's name."""
+    (tmp_path / "index.html").write_text("<h1>hola</h1>")
+    p = panel(ready=False)
+    await p.publish_folder(tmp_path, name="nullcell")
+    try:
+        for ajeno in ("panaderia.null", "b" * 56 + ".null", "nullcell.example.com", ""):
+            assert p.local_url_for(ajeno) is None, f"atajo aplicado a {ajeno!r}"
+    finally:
+        await p.unpublish()
+
+
+async def test_without_a_portal_there_is_nothing_local_to_serve():
+    assert panel().local_url_for("nullcell") is None

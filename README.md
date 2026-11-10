@@ -256,6 +256,17 @@ nombre `nullcell.null`.
 > distinta con otra dirección, y el nombre sigue apuntando a la vieja hasta que caduque. El
 > programa avisa.
 
+### Visitar tu propio portal con una sola máquina
+
+Funciona desde el primer momento. Escribe `nullcell.null` en el navegador y se abre, aunque no haya
+nadie más en la red: **visitar tu propio sitio no necesita circuito** porque eres los dos extremos,
+así que no hay tercero y no hay nada que anonimizar. La barra lo etiqueta **«tu portal · local»**,
+para que no se confunda con haberlo alcanzado por la red.
+
+El atajo vale **sólo para tu dirección y tu nombre declarado**, y ese límite es toda su seguridad:
+cualquier otro destino pasa por los circuitos, o esto se convertiría en una forma de servir algo
+local bajo el nombre de otro.
+
 ### Qué ve alguien si apagas la máquina
 
 El nombre no se pierde: el registro `NAME` sigue apuntando a tu clave. Lo que caduca —en una hora—

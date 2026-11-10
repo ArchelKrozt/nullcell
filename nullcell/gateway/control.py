@@ -41,6 +41,7 @@ import time
 from pathlib import Path
 from typing import Any, Final
 
+from nullcell.core import ids
 from nullcell.core import reach as reach_mod
 
 __all__ = ["Action", "ControlError", "ControlPanel"]
@@ -443,6 +444,29 @@ class ControlPanel:
             await asyncio.sleep(RECONCILE_EVERY)
             with contextlib.suppress(Exception):
                 await self.reconcile()
+
+    # --------------------------------------------------- tu propio portal
+    def local_url_for(self, host: str) -> str | None:
+        """The loopback address of **our own** portal, or None.
+
+        Visiting your own site needs no circuit and no network: you are both
+        ends, so there is no third party and nothing to anonymise. Without
+        this, typing your own `nullcell.null` on a one-node network answers
+        "ese nombre no existe en la red" — about a portal that is running on
+        this very machine.
+
+        Scoped to this cell's own address and its own declared name, and that
+        limit is the whole safety of it. Any other host must go through the
+        circuits, or the shortcut would become a way to serve something local
+        under somebody else's name.
+        """
+        if self.portal is None or not self.portal.get("preview"):
+            return None
+        wanted = host.strip().lower().removesuffix(ids.SUFFIX)
+        ours = {self.runtime.identity.hostname.lower().removesuffix(ids.SUFFIX)}
+        if name := self.portal.get("name"):
+            ours.add(str(name).strip().lower())
+        return self.portal["preview"] if wanted in ours else None
 
     # ----------------------------------------------------------------- estado
     def describe(self) -> dict[str, Any]:

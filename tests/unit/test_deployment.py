@@ -297,3 +297,35 @@ def test_a_generated_declaration_can_be_read_back(tmp_path):
     written = deployment.write_declaration(portals=[Portal(folder="web", name="pan")])
     assert written.name == "nullcell.json"
     assert Deployment.load(tmp_path).portals[0].name == "pan"
+
+
+# ------------------------------- la barra de direcciones: portal o búsqueda
+def test_only_an_explicit_name_or_a_valid_address_is_a_destination():
+    """`ids.parse_hostname` only strips the suffix and lowercases — it does not
+    validate — so deciding with it alone made the address bar treat «recetas de
+    pan» as a portal and left the search box as dead code."""
+    from nullcell.core.identity import Identity
+    from nullcell.desktop.browser_chrome import is_destination
+
+    address = Identity.generate().hostname.removesuffix(".null")
+
+    assert is_destination("nullcell.null") == "nullcell"
+    assert is_destination("HOLA.null") == "hola"
+    assert is_destination(address) == address
+    assert is_destination(f"{address}.null") == address
+
+    for search in ("recetas de pan", "pan", "nullcell", "algo.com", "", "   "):
+        assert is_destination(search) is None, f"{search!r} no debería ser un destino"
+
+
+def test_a_corrupted_address_is_not_a_destination():
+    """One wrong character fails the checksum, and a near-miss address is
+    exactly what somebody would hand you on purpose."""
+    from nullcell.core.identity import Identity
+    from nullcell.desktop.browser_chrome import is_destination
+
+    address = Identity.generate().hostname.removesuffix(".null")
+    # Not a fixed letter: "z" + address[1:] is the *same* address once in 32,
+    # and a test that passes 31 times out of 32 is worse than none.
+    other = "z" if address[0] != "z" else "q"
+    assert is_destination(other + address[1:]) is None

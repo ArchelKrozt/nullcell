@@ -51,7 +51,7 @@ class NullFetcher:
         self.open_session = open_session
         self._sessions: dict[str, Any] = {}
         self._locks: dict[str, asyncio.Lock] = {}
-        self.stats = {"requests": 0, "sessions": 0, "failed": 0}
+        self.stats = {"requests": 0, "sessions": 0, "failed": 0, "local": 0}
 
     async def _session_for(self, bare: str) -> Any:
         """One session per service, built once (§8)."""
@@ -86,6 +86,24 @@ class NullFetcher:
         finally:
             await _quietly_close(stream)
         return _parse(raw)
+
+    async def fetch_local(self, base: str, path: str) -> Fetched:
+        """Our own portal, straight from its loopback preview.
+
+        The same application the network portal serves, so what you see here
+        is what the network will serve — it is not a different rendering of
+        the same folder.
+        """
+        import aiohttp
+
+        self.stats["requests"] += 1
+        self.stats["local"] = self.stats.get("local", 0) + 1
+        url = base.rstrip("/") + "/" + path.lstrip("/")
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as http, http.get(url) as response:
+            body = await response.read()
+            headers = {k.lower(): v for k, v in response.headers.items()}
+            return Fetched(response.status, headers, body)
 
     async def _read_all(self, stream: Any) -> bytes:
         chunks: list[bytes] = []
