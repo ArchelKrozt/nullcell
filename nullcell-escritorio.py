@@ -24,6 +24,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+#: Quien tenga el entorno en otro sitio lo dice aquí, y deja de ser adivinanza.
+#: Sin esto, una instalación perfectamente válida en una ruta poco común
+#: recibía «no encuentro una instalación de Nullcell», que es falso.
+ENV_VAR = "NULLCELL_PYTHON"
+
 #: Dónde suele vivir el entorno, por orden.
 CANDIDATES = (
     Path.home() / ".venvs" / "nullcell" / "bin" / "python",
@@ -77,7 +82,9 @@ def main() -> int:
     try:
         from nullcell.cli.main import app
     except ImportError:  # falta el paquete o alguna dependencia
-        for candidate in CANDIDATES:
+        declared = os.environ.get(ENV_VAR)
+        candidates = ([Path(declared)] if declared else []) + list(CANDIDATES)
+        for candidate in candidates:
             if _usable(candidate):
                 # Re-lanzado, no importado: el entorno correcto tiene que ser
                 # el del proceso entero, no sólo el de este módulo.

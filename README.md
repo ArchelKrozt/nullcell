@@ -178,6 +178,12 @@ En la carpeta del proyecto hay dos ficheros equivalentes al comando de arriba:
 
 La línea de comandos no cambia ni desaparece: esto es otra puerta a la misma habitación.
 
+Si tu entorno está en una ruta poco común, dilo y deja de ser adivinanza:
+
+```bash
+NULLCELL_PYTHON=/ruta/a/tu/venv/bin/python python3 nullcell-escritorio.py
+```
+
 > **Si lo abres con la app de Python, se relanza solo.** Un `.py` abierto así se ejecuta con el
 > Python del sistema, no con el entorno donde están las dependencias, y el resultado sería un
 > `ModuleNotFoundError` en una ventana que se cierra sola. El script busca un intérprete que sirva

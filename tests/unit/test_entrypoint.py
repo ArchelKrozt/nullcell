@@ -69,19 +69,38 @@ def test_it_relaunches_with_an_interpreter_that_works():
     assert ".venvs" in text
 
 
+def test_an_environment_somewhere_else_can_be_declared():
+    """La lista de rutas habituales es una adivinanza, y falló en el CI: una
+    instalación perfectamente válida en otro sitio recibía «no encuentro una
+    instalación de Nullcell», que es sencillamente falso."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert 'ENV_VAR = "NULLCELL_PYTHON"' in text
+    assert "os.environ.get(ENV_VAR)" in text
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="ruta POSIX")
-def test_the_system_python_hands_over_to_the_right_one():
-    """La prueba de verdad: lanzarlo con un intérprete que no tiene las
-    dependencias y ver que acaba ejecutando Nullcell igualmente."""
+def test_an_interpreter_without_the_package_hands_over_to_one_that_has_it():
+    """La prueba de verdad del re-lanzado: se arranca con un intérprete que no
+    puede importar nullcell y tiene que acabar ejecutándolo igualmente.
+
+    El intérprete bueno se declara en vez de buscarse, para que esto valga
+    tanto aquí como en un runner donde `~/.venvs/nullcell` no existe — que es
+    exactamente lo que rompió este test la primera vez."""
     system = pathlib.Path("/usr/bin/python3")
     if not system.is_file():
         pytest.skip("no hay un python de sistema con el que probar")
+    if system.resolve() == pathlib.Path(sys.executable).resolve():
+        pytest.skip("el python de sistema ya es el que tiene el paquete")
+
+    import os
+
     done = subprocess.run(
         [str(system), str(SCRIPT), "--help"],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=180,
         cwd=ROOT,
+        env={**os.environ, "NULLCELL_PYTHON": sys.executable},
     )
-    assert done.returncode == 0, done.stderr[-500:]
+    assert done.returncode == 0, done.stderr[-600:]
     assert "barra de menús" in done.stdout or "desktop" in done.stdout
