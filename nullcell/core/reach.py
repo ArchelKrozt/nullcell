@@ -115,5 +115,8 @@ def best_endpoint(port: int, *, announce: str | None = None) -> tuple[str, Reach
         return announce, classify(announce)
     host = lan_address()
     if host:
-        return f"{host}:{port}", "lan"
+        # Clasificado, no supuesto: devolver «lan» a secas daba esa etiqueta a
+        # la IP pública de una máquina alojada, y con ella `ncell relay` se
+        # habría negado a arrancar en el único sitio donde debe hacerlo.
+        return f"{host}:{port}", classify(host)
     return f"127.0.0.1:{port}", "loopback"
