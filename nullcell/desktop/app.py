@@ -294,11 +294,43 @@ class Shell:
         self.panel.activateWindow()
 
     def quit(self) -> None:
+        """Cerrar: desaparecer ya, apagar el nodo después.
+
+        Antes se llamaba a `node.stop()`, que hace `join` —en el hilo de Qt—
+        y con el navegador abierto eso eran **diez segundos de ventana
+        congelada** antes de que se cerrara nada. Pulsar «Salir» y que no pase
+        nada es indistinguible de que el programa se haya colgado.
+        """
+        import time
+
+        from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QApplication
 
         log.info("cerrando el nodo")
-        self.node.stop()
-        QApplication.quit()
+        # Primero desaparecer, que es lo que la persona pidió.
+        if self.browser is not None:
+            self.browser.shutdown()
+            self.browser.hide()
+        if self.panel is not None:
+            self.panel.hide()
+        if self.tray is not None:
+            self.tray.hide()
+        QApplication.processEvents()
+
+        self.node.request_stop()
+
+        # Y esperar al nodo **sin** bloquear. El hilo es daemon, así que un
+        # apagado atascado no impide salir: el plazo es por cortesía con los
+        # circuitos abiertos, no una condición.
+        deadline = time.monotonic() + 6.0
+
+        def done() -> None:
+            if not self.node.running or time.monotonic() > deadline:
+                QApplication.quit()
+            else:
+                QTimer.singleShot(100, done)
+
+        QTimer.singleShot(0, done)
 
 
 def run(**options: Any) -> int:

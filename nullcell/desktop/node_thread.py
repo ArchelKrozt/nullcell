@@ -15,6 +15,7 @@ running process instead of flags remembered between restarts.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 from pathlib import Path
@@ -74,10 +75,21 @@ class NodeThread:
         assert self.url is not None
         return self.url
 
-    def stop(self, timeout: float = 10.0) -> None:
+    def request_stop(self) -> None:
+        """Pedir la parada y volver **inmediatamente**.
+
+        La interfaz no puede esperar aquí: `stop()` hace `join`, y hacer
+        `join` en el hilo de Qt congela la ventana el plazo entero. Con el
+        navegador abierto eso eran diez segundos de aplicación muerta al
+        pulsar «Salir».
+        """
         if self._loop is None or self._stop is None:
             return
         self._loop.call_soon_threadsafe(self._stop.set)
+
+    def stop(self, timeout: float = 10.0) -> None:
+        """Pedir la parada y esperarla. Para la terminal, no para la interfaz."""
+        self.request_stop()
         self._thread.join(timeout)
 
     @property
@@ -207,7 +219,17 @@ class NodeThread:
             await self._stop.wait()
         finally:
             self._save_peers()
+            # Acotado: cerrar circuitos y servidores puede quedarse esperando
+            # a algo que ya no va a llegar, y entonces el hilo no termina
+            # nunca. Un apagado que tarda mucho es un apagado que no ocurre.
+            with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(self._shutdown(ui, runtime), timeout=5.0)
+
+    @staticmethod
+    async def _shutdown(ui: Any, runtime: Any) -> None:
+        with contextlib.suppress(Exception):
             await ui.close()
+        with contextlib.suppress(Exception):
             await runtime.close()
 
     def _save_peers(self, path: Path | None = None) -> None:

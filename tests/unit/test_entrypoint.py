@@ -12,10 +12,45 @@ import pathlib
 import stat
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+def code_of(obj) -> str:
+    """El código de *obj*, **sin su documentación ni sus comentarios**.
+
+    Un test que busca `node.stop()` en el fuente lo encuentra en la frase que
+    explica por qué ya no se llama, y convierte la explicación en un fallo. Ha
+    pasado dos veces, así que mejor una función que acordarse.
+    """
+    import ast
+    import inspect
+    import io
+    import tokenize
+
+    source = inspect.getsource(obj)
+    tree = ast.parse(textwrap.dedent(source))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                node.body = body[1:] or [ast.Pass()]
+    cleaned = ast.unparse(tree)
+    # `ast.unparse` ya descarta los comentarios; esto sólo normaliza.
+    return "".join(
+        token.string if token.type != tokenize.COMMENT else ""
+        for token in tokenize.generate_tokens(io.StringIO(cleaned).readline)
+    )
+
+
 SCRIPT = ROOT / "nullcell-escritorio.py"
 COMMAND = ROOT / "Nullcell.command"
 
@@ -135,3 +170,54 @@ def test_declining_a_deployment_is_remembered():
     source = (ROOT / "nullcell" / "desktop" / "app.py").read_text(encoding="utf-8")
     assert "sin-despliegue" in source
     assert "Borra este fichero" in source, "y hay que decir cómo deshacerlo"
+
+
+# ----------------------------------- M10: «Salir» no debe congelar la ventana
+def test_quit_never_joins_the_node_thread_from_the_ui():
+    """`join` en el hilo de Qt congela la ventana el plazo entero: medido, con
+    el navegador abierto eran **10,1 segundos** de aplicación muerta tras
+    pulsar «Salir». Pulsar y que no pase nada es indistinguible de colgarse."""
+    from nullcell.desktop.app import Shell
+
+    source = code_of(Shell.quit)
+    assert "request_stop" in source
+    assert "node.stop()" not in source, "stop() hace join y bloquea la interfaz"
+
+
+def test_quit_hides_everything_before_waiting():
+    """Desaparecer es lo que la persona pidió; apagar el nodo es cosa nuestra
+    y puede tardar."""
+    from nullcell.desktop.app import Shell
+
+    source = code_of(Shell.quit)
+    for piece in ("self.panel.hide()", "self.tray.hide()", "self.browser.shutdown()"):
+        assert piece in source, f"falta {piece}"
+    assert source.index("hide()") < source.index("request_stop")
+
+
+def test_requesting_a_stop_returns_without_waiting():
+    """La separación que hace posible lo anterior."""
+    from nullcell.desktop.node_thread import NodeThread
+
+    assert "join" not in code_of(NodeThread.request_stop)
+    assert "join" in code_of(NodeThread.stop), "la versión de terminal sí espera"
+
+
+def test_the_nodes_own_shutdown_is_bounded():
+    """Cerrar circuitos puede quedarse esperando algo que ya no llega, y
+    entonces el hilo no termina nunca. Un apagado que tarda mucho es un
+    apagado que no ocurre."""
+    from nullcell.desktop.node_thread import NodeThread
+
+    assert "wait_for(self._shutdown" in code_of(NodeThread._serve)
+
+
+def test_the_browser_releases_its_page_before_the_profile():
+    """Qt destruye padres e hijos en un orden que no promete nada, y si el
+    perfil se va primero aparece «Release of profile requested but
+    WebEnginePage still not deleted»: aviso en el mejor caso, cierre colgado
+    en el peor."""
+    source = (ROOT / "nullcell" / "desktop" / "browser.py").read_text(encoding="utf-8")
+    assert "def shutdown(self)" in source
+    assert "setPage(None)" in source
+    assert "deleteLater()" in source

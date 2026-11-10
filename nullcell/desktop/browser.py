@@ -195,6 +195,19 @@ class BrowserWindow(QWidget):
         layout.addWidget(self.status)
         self.go_home()
 
+    def shutdown(self) -> None:
+        """Soltar la página antes que el perfil.
+
+        Qt destruye padres e hijos en un orden que no promete nada, y si el
+        perfil se va primero aparece «Release of profile requested but
+        WebEnginePage still not deleted» — que en el mejor caso es un aviso y
+        en el peor cuelga el cierre.
+        """
+        page = self.view.page()
+        self.view.setPage(None)
+        if page is not None:
+            page.deleteLater()
+
     # ------------------------------------------------------------- navegar
     def _dashboard(self) -> str | None:
         """This node's own panel: search, circuits, portals (§9).
