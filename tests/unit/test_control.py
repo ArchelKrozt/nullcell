@@ -688,3 +688,71 @@ async def test_each_cell_says_why_it_is_or_is_not_usable(tmp_path):
 
 async def test_the_listing_is_empty_without_crashing():
     assert panel().cells() == []
+
+
+# --------------- M10: una semilla guardada no puede ser invisible
+async def test_a_saved_seed_shows_up_even_without_a_descriptor(tmp_path):
+    """El panel listaba sólo el directorio de relevos, así que una semilla
+    guardada y viva era invisible hasta que alguien conseguía su descriptor.
+    Quien la acababa de pegar veía su lista igual que antes y concluía, con
+    razón, que no se había guardado."""
+    from nullcell.core.identity import Identity
+    from nullcell.dht.routing_table import Node
+    from nullcell.discovery.bootstrap import save_peers
+
+    guardada = Node(pub=Identity.generate().public_key, endpoints=["62.171.160.130:4433"])
+    save_peers(tmp_path / "peers.db", [guardada])
+
+    p = panel()
+    p.home = tmp_path
+    listadas = p.cells()
+
+    assert [c["address"] for c in listadas] == [guardada.nid]
+    assert listadas[0]["state"] == "sin datos"
+    assert listadas[0]["endpoint"] == "62.171.160.130:4433"
+    assert "guardada" in listadas[0]["detail"]
+
+
+async def test_a_cell_with_a_descriptor_is_not_listed_twice(tmp_path):
+    """Está en las dos fuentes; debe salir una vez, con lo que más se sabe."""
+    import time
+
+    from nullcell.cli.runtime import Runtime
+    from nullcell.core.identity import Identity
+    from nullcell.dht.routing_table import Node
+    from nullcell.discovery.bootstrap import save_peers
+    from nullcell.onion.path_select import MIN_OBSERVED_AGE, RelayCandidate
+
+    quien = Identity.generate()
+    runtime = Runtime.assemble(Identity.generate(), tmp_path)
+    relay = RelayCandidate(
+        pub=quien.public_key, x25519=b"\x02" * 32, endpoints=["62.171.160.130:4433"], pow_bits=9
+    )
+    relay.first_seen = time.time() - MIN_OBSERVED_AGE - 60
+    runtime.directory._relays[relay.pub] = relay  # noqa: SLF001
+    save_peers(tmp_path / "peers.db", [Node(pub=quien.public_key, endpoints=["1.2.3.4:4433"])])
+
+    p = ControlPanel(runtime, home=tmp_path)
+    try:
+        listadas = p.cells()
+        assert len(listadas) == 1
+        assert listadas[0]["state"] == "usable"
+    finally:
+        await runtime.close()
+
+
+async def test_usable_cells_come_before_the_ones_without_data(tmp_path):
+    from nullcell.core.identity import Identity
+    from nullcell.dht.routing_table import Node
+    from nullcell.discovery.bootstrap import save_peers
+
+    save_peers(
+        tmp_path / "peers.db",
+        [
+            Node(pub=Identity.generate().public_key, endpoints=[f"62.17{i}.160.130:4433"])
+            for i in range(2)
+        ],
+    )
+    p = panel()
+    p.home = tmp_path
+    assert all(c["state"] == "sin datos" for c in p.cells())

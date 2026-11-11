@@ -32,9 +32,7 @@ def _complete(static_private, public_bytes):
 def test_handshake_with_a_real_node_identity():
     """What a relay actually runs with: the key Identity derives (PyNaCl)."""
     identity = Identity(os.urandom(32))
-    initiator_keys, responder_keys = _complete(
-        identity.x25519_private, identity.x25519_public
-    )
+    initiator_keys, responder_keys = _complete(identity.x25519_private, identity.x25519_public)
     assert initiator_keys.forward == responder_keys.forward
     assert initiator_keys.backward == responder_keys.backward
 

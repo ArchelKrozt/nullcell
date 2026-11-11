@@ -274,6 +274,8 @@ main {
 .cell.usable    { border-left-color: var(--ok); }
 .cell.esperando { border-left-color: var(--warn); }
 .cell.rechazado { border-left-color: var(--accent-alert); opacity: .75; }
+.cell.sin-datos { border-left-color: var(--text-dim); }
+.cell.sin-datos .tag { color: var(--text-dim); }
 .cell .who { color: var(--text); }
 .cell .where { color: var(--text-dim); }
 .cell .why { grid-column: 1 / -1; color: var(--text-dim); }

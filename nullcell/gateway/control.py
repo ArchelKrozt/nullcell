@@ -682,8 +682,56 @@ class ControlPanel:
                     "operator": next(iter(relay.prefixes), ""),
                 }
             )
-        order = {"usable": 0, "esperando": 1, "rechazado": 2}
+        # Y lo que se conoce pero todavía no tiene descriptor de relevo.
+        #
+        # El panel listaba sólo el directorio de relevos, así que una semilla
+        # guardada y perfectamente viva era INVISIBLE hasta que alguien
+        # consiguiera su descriptor. Quien la acababa de pegar veía su lista
+        # igual que antes y concluía, con razón, que no se había guardado.
+        conocidos = {c["address"] for c in out}
+        for node in self._known_cells():
+            address = node.nid
+            if address in conocidos:
+                continue
+            conocidos.add(address)
+            out.append(
+                {
+                    "address": address,
+                    "short": ids.short(address),
+                    "endpoint": node.endpoints[0] if node.endpoints else "",
+                    "observed_for": 0,
+                    "usable_in": 0,
+                    "state": "sin datos",
+                    "detail": "guardada, pero todavía no publica descriptor de relevo",
+                    "guard": False,
+                    "operator": "",
+                }
+            )
+
+        order = {"usable": 0, "esperando": 1, "sin datos": 2, "rechazado": 3}
         return sorted(out, key=lambda c: (order[c["state"]], -c["observed_for"]))
+
+    def _known_cells(self) -> list[Any]:
+        """Celdas que esta conoce: la tabla de rutas y lo guardado en disco.
+
+        Las dos, porque dicen cosas distintas: la tabla es quién responde
+        *ahora* y el fichero es quién respondió alguna vez. Una semilla recién
+        pegada que todavía no ha contestado está en la segunda y no en la
+        primera, y seguir sin enseñarla sería repetir el mismo silencio.
+        """
+        from nullcell.discovery.bootstrap import load_peers
+
+        nodes: dict[str, Any] = {}
+        with contextlib.suppress(Exception):
+            for node in self.runtime.node.table.all_nodes():
+                nodes[node.nid] = node
+        # El fichero **de este nodo**, no el del usuario que ejecuta: un panel
+        # pertenece a una celda concreta, y leer la configuración global hacía
+        # que enseñara los pares de otra.
+        with contextlib.suppress(Exception):
+            for node in load_peers(self.home / "peers.db"):
+                nodes.setdefault(node.nid, node)
+        return list(nodes.values())
 
     # ----------------------------------------------------------------- estado
     def describe(self) -> dict[str, Any]:

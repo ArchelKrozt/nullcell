@@ -552,7 +552,7 @@ function pintarRed(control) {
   if (!cells.length) return;
   for (const c of cells) {
     const row = document.createElement("div");
-    row.className = `cell ${c.state}`;
+    row.className = `cell ${c.state.replace(" ", "-")}`;
     const who = document.createElement("span");
     who.className = "who";
     who.textContent = c.short;
