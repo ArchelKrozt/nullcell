@@ -23,6 +23,23 @@
 </form>
 
 <main>
+  <!-- Lo primero, porque decide todo lo demás: qué se puede hacer y qué falta. -->
+  <section class="panel wide" id="panel-red">
+    <h2>red <span class="dim">quién hay, y qué puedes hacer</span></h2>
+
+    <p class="verdict" id="verdict">conectando…</p>
+    <div class="steps" id="steps"></div>
+
+    <form class="seedbox" id="seed-form" autocomplete="off">
+      <input id="seed-input" type="text" spellcheck="false"
+             placeholder="pega una invitación o una semilla para entrar">
+      <button type="submit">añadir</button>
+    </form>
+    <p class="note" id="seed-note" hidden></p>
+
+    <div id="cells" class="cells"></div>
+  </section>
+
   <section class="panel" id="panel-results" hidden>
     <h2>Resultados <span class="hint">§8 · relevancia × frescura × confirmaciones × endosos</span></h2>
     <div id="results" class="list"></div>

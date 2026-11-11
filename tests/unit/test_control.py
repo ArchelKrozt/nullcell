@@ -22,6 +22,7 @@ class FakePaths:
         self.ready = ready
         self.ready_in = ready_in
         self.hops = hops
+        self.min_pow_bits = 9
 
     @property
     def anonymous(self) -> bool:
@@ -97,9 +98,14 @@ class FakeDirectory:
         return list(self._relays)
 
 
+class FakeGuards:
+    pubs: tuple = ()
+
+
 class FakeRuntime:
     def __init__(self, *, endpoints=None, ready: bool = True, relays=None, hops: int = 3) -> None:
         self.directory = FakeDirectory(relays)
+        self.guards = FakeGuards()
         self.node = FakeNode(endpoints)
         self.publisher = FakePublisher()
         self.paths = FakePaths(ready, hops=hops)
@@ -635,3 +641,47 @@ def test_three_hops_says_nothing_because_there_is_nothing_to_say():
     state = panel().describe()
     assert state["anonymous"] is True
     assert state["anonymity_warning"] == ""
+
+
+# ------------------------- M10: quién hay en la red, y por qué sirve o no
+async def test_each_cell_says_why_it_is_or_is_not_usable(tmp_path):
+    """«3 relevos conocidos, 0 usables» no dice cuál es cuál ni qué le pasa a
+    cada uno. Un número desconcertante se vuelve una lista en la que se ve que
+    a dos les faltan minutos y una no tiene dirección comparable."""
+    import time
+
+    from nullcell.cli.runtime import Runtime
+    from nullcell.core.identity import Identity
+    from nullcell.onion.path_select import MIN_OBSERVED_AGE, RelayCandidate
+
+    runtime = Runtime.assemble(Identity.generate(), tmp_path)
+    now = time.time()
+
+    joven = RelayCandidate(
+        pub=b"\x01" * 32, x25519=b"\x02" * 32, endpoints=["62.171.160.130:4433"], pow_bits=9
+    )
+    maduro = RelayCandidate(
+        pub=b"\x03" * 32, x25519=b"\x04" * 32, endpoints=["203.0.113.9:4433"], pow_bits=9
+    )
+    maduro.first_seen = now - MIN_OBSERVED_AGE - 60
+    pobre = RelayCandidate(
+        pub=b"\x05" * 32, x25519=b"\x06" * 32, endpoints=["8.8.8.8:4433"], pow_bits=1
+    )
+    pobre.first_seen = now - MIN_OBSERVED_AGE - 60
+    for relay in (joven, maduro, pobre):
+        runtime.directory._relays[relay.pub] = relay  # noqa: SLF001
+
+    p = ControlPanel(runtime, home=tmp_path)
+    por_estado = {c["state"]: c for c in p.cells()}
+    try:
+        assert por_estado["usable"]["endpoint"] == "203.0.113.9:4433"
+        assert "min" in por_estado["esperando"]["detail"]
+        assert "trabajo" in por_estado["rechazado"]["detail"]
+        # Lo que se puede usar, primero.
+        assert p.cells()[0]["state"] == "usable"
+    finally:
+        await runtime.close()
+
+
+async def test_the_listing_is_empty_without_crashing():
+    assert panel().cells() == []

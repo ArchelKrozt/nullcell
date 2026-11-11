@@ -424,3 +424,138 @@ async function refrescarChat() {
 
 refrescarChat();
 setInterval(refrescarChat, 2000);
+
+/* ------------------------------------------- el estado de la red (M10)
+ *
+ * El tablero decía «1 relevos conocidos, 0 usables» y ahí se acababa la
+ * explicación: ni cuál es cuál, ni qué le pasa a cada uno, ni qué hacer. Esto
+ * contesta tres preguntas en orden —¿puedo navegar?, ¿qué falta?, ¿quién
+ * hay?— y deja añadir una semilla sin salir de aquí.
+ *
+ * Todo el texto se inserta con textContent: una dirección y un extremo los
+ * escribe otra gente, y esta página los pinta.
+ */
+const red = {
+  verdict: el("verdict"),
+  steps: el("steps"),
+  cells: el("cells"),
+  form: el("seed-form"),
+  input: el("seed-input"),
+  note: el("seed-note"),
+};
+
+function paso(estado, titulo, texto) {
+  const box = document.createElement("div");
+  box.className = `step ${estado}`;
+  const b = document.createElement("b");
+  b.textContent = titulo;
+  box.append(b, document.createTextNode(texto));
+  return box;
+}
+
+function pintarRed(control) {
+  const net = control.network || {};
+  const cells = control.cells || [];
+  const conocidas = cells.length;
+  const usables = cells.filter((c) => c.state === "usable").length;
+  const esperando = cells.filter((c) => c.state === "esperando").length;
+  const operadores = net.operators ?? 0;
+  const hacenFalta = net.needed ?? 3;
+
+  // 1. ¿Puedo navegar?
+  if (control.paths_ready) {
+    red.verdict.className = "verdict ok";
+    red.verdict.textContent = control.anonymous
+      ? "Puedes navegar y publicar. La red funciona."
+      : "Puedes navegar y publicar — pero SIN ANONIMATO (circuitos cortos).";
+  } else if (conocidas === 0) {
+    red.verdict.className = "verdict no";
+    red.verdict.textContent =
+      "No conoces ninguna celda todavía. Pega abajo la invitación de alguien para entrar.";
+  } else if (operadores < hacenFalta) {
+    red.verdict.className = "verdict no";
+    red.verdict.textContent =
+      `Esperar no basta: conoces ${operadores} operador${operadores === 1 ? "" : "es"} ` +
+      `y hacen falta ${hacenFalta}. Necesitas la semilla de otra máquina, de otro sitio.`;
+  } else {
+    red.verdict.className = "verdict wait";
+    red.verdict.textContent =
+      `Ya sólo hay que esperar: ${esperando} celda${esperando === 1 ? "" : "s"} ` +
+      "cumpliendo sus 10 minutos de antigüedad.";
+  }
+
+  // 2. ¿Qué falta, en orden?
+  red.steps.replaceChildren(
+    paso(
+      conocidas ? "done" : "todo",
+      `1 · Entrar ${conocidas ? "✓" : ""}`,
+      conocidas ? `conoces ${conocidas} celda${conocidas === 1 ? "" : "s"}` : "pega una invitación",
+    ),
+    paso(
+      operadores >= hacenFalta ? "done" : "todo",
+      `2 · Operadores ${operadores >= hacenFalta ? "✓" : ""}`,
+      `${operadores} de ${hacenFalta}. Cuentan operadores distintos, no máquinas`,
+    ),
+    paso(
+      usables >= hacenFalta ? "done" : esperando ? "wait" : "todo",
+      `3 · Antigüedad ${usables >= hacenFalta ? "✓" : ""}`,
+      `${usables} usable${usables === 1 ? "" : "s"}; 10 min observada cada una`,
+    ),
+  );
+
+  // 3. ¿Quién hay?
+  red.cells.replaceChildren();
+  if (!cells.length) return;
+  for (const c of cells) {
+    const row = document.createElement("div");
+    row.className = `cell ${c.state}`;
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = c.short;
+    if (c.guard) {
+      const g = document.createElement("span");
+      g.className = "guard";
+      g.textContent = "  · guard";
+      who.append(g);
+    }
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = c.state;
+    const why = document.createElement("span");
+    why.className = "why";
+    why.textContent = `${c.endpoint || "sin dirección"} — ${c.detail}`;
+    row.append(who, tag, why);
+    red.cells.append(row);
+  }
+}
+
+red.form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const line = red.input.value.trim();
+  if (!line) return;
+  try {
+    const result = await chatCall("/api/control/seed", { seed: line });
+    red.note.className = result.peers ? "note" : "note bad";
+    red.note.textContent =
+      result.detail + (result.portal ? ` · te invitan a ${result.portal}.null` : "");
+    red.note.hidden = false;
+    if (result.peers) red.input.value = "";
+  } catch (error) {
+    red.note.className = "note bad";
+    red.note.textContent = error.message;
+    red.note.hidden = false;
+  }
+  refrescarRed();
+});
+
+async function refrescarRed() {
+  try {
+    pintarRed(await chatCall("/api/control"));
+  } catch {
+    red.verdict.className = "verdict no";
+    red.verdict.textContent = "este nodo no expone controles (sólo lectura)";
+  }
+}
+
+refrescarRed();
+setInterval(refrescarRed, 4000);

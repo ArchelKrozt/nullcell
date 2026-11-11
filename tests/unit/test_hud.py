@@ -267,3 +267,29 @@ def test_history_and_live_push_fold_the_same_way():
     history = bus.recent()
     assert len(history) == 1
     assert history[0]["count"] == 4
+
+
+# ------------------------------- M10: el bloque de red del tablero (§9)
+def test_the_network_block_is_the_first_thing_in_the_dashboard():
+    """Decide todo lo demás: si no hay red, ni buscar ni publicar sirven."""
+    html = (HUD_ROOT / "index.html").read_text(encoding="utf-8")
+    main = html[html.index("<main>") :]
+    assert main.index('id="panel-red"') < main.index('id="panel-circuits"')
+
+
+def test_a_seed_can_be_added_from_the_dashboard():
+    """Antes sólo se podía desde el panel de la barra de menús, que es otra
+    ventana y otro sitio donde buscarlo."""
+    html = (HUD_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (HUD_ROOT / "app.js").read_text(encoding="utf-8")
+    assert 'id="seed-form"' in html
+    assert "/api/control/seed" in js
+
+
+def test_cells_are_painted_with_textContent_not_html():
+    """Una dirección y un extremo los escribe otra gente y esta página los
+    pinta: es entrada hostil con otro nombre."""
+    js = (HUD_ROOT / "app.js").read_text(encoding="utf-8")
+    bloque = js[js.index("function pintarRed") :]
+    assert "innerHTML" not in bloque
+    assert "textContent" in bloque

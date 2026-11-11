@@ -16,6 +16,8 @@
   --text-dim: #7d8da3;
   --accent-data: #22d3ee;
   --accent-alert: #ff00ff;
+  --ok: #34d399;
+  --warn: var(--warn);
   --grid: #101722;
   --glow: 0 0 6px color-mix(in srgb, var(--accent-data) 45%, transparent);
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -226,3 +228,63 @@ main {
 .chat-line .who { color: var(--accent-data); flex: none; }
 .chat-line.mine .who { color: var(--accent-alert); }
 .chat-line .what { word-break: break-word; }
+
+
+/* ------------------------------------------- el estado de la red (§9, M10) */
+.verdict { margin: 0 0 10px; font-size: 14px; line-height: 1.5; }
+.verdict.ok   { color: var(--ok); }
+.verdict.wait { color: var(--warn); }
+.verdict.no   { color: var(--accent-alert); }
+
+/* Tres pasos: lo que hace falta para poder navegar, en orden. */
+.steps { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.step {
+  flex: 1 1 180px; padding: 8px 10px; border: 1px solid var(--border);
+  border-left-width: 2px; border-radius: var(--radius); background: var(--surface);
+  font-size: 11.5px; line-height: 1.45;
+}
+.step b { display: block; font-size: 12px; margin-bottom: 2px; }
+.step.done { border-left-color: var(--ok); }
+.step.done b { color: var(--ok); }
+.step.wait { border-left-color: var(--warn); }
+.step.wait b { color: var(--warn); }
+.step.todo { border-left-color: var(--accent-alert); }
+.step.todo b { color: var(--accent-alert); }
+
+.seedbox { display: flex; gap: 6px; margin-bottom: 8px; }
+.seedbox input {
+  flex: 1; min-width: 0; padding: 6px 9px; font-family: inherit; font-size: 12px;
+  color: var(--text); background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.seedbox input:focus { outline: none; border-color: var(--accent-data); }
+.seedbox button {
+  padding: 6px 12px; font-family: inherit; font-size: 12px; cursor: pointer;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.seedbox button:hover { border-color: var(--accent-data); color: var(--accent-data); }
+
+.cells { display: flex; flex-direction: column; gap: 4px; }
+.cell {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: baseline;
+  padding: 7px 9px; background: var(--surface); border-radius: var(--radius);
+  border-left: 2px solid var(--border); font-size: 11.5px;
+}
+.cell.usable    { border-left-color: var(--ok); }
+.cell.esperando { border-left-color: var(--warn); }
+.cell.rechazado { border-left-color: var(--accent-alert); opacity: .75; }
+.cell .who { color: var(--text); }
+.cell .where { color: var(--text-dim); }
+.cell .why { grid-column: 1 / -1; color: var(--text-dim); }
+.cell .tag {
+  font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;
+  padding: 1px 7px; border: 1px solid currentColor; border-radius: 9px;
+}
+.cell.usable .tag    { color: var(--ok); }
+.cell.esperando .tag { color: var(--warn); }
+.cell.rechazado .tag { color: var(--accent-alert); }
+.cell .guard { color: var(--accent-data); }
+.note { margin: 6px 0 10px; padding: 7px 9px; font-size: 11px; color: var(--text-dim);
+        border-left: 2px solid var(--accent-data); background: var(--surface); }
+.note.bad { border-left-color: var(--accent-alert); color: var(--text); }

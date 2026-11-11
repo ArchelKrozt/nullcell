@@ -639,6 +639,49 @@ class ControlPanel:
             ours.add(str(name).strip().lower())
         return self.portal["preview"] if wanted in ours else None
 
+    # ------------------------------------------------------ quién hay ahí
+    def cells(self) -> list[dict[str, Any]]:
+        """Las celdas que esta conoce, con **por qué** sirven o no.
+
+        «3 relevos conocidos, 0 usables» no dice cuál es cuál ni qué le pasa a
+        cada uno. Enseñarlas una por una convierte un número desconcertante en
+        una lista en la que se ve que a dos les faltan minutos y una no tiene
+        dirección comparable.
+        """
+        from nullcell.onion.path_select import MIN_OBSERVED_AGE
+
+        now = time.time()
+        floor = self.runtime.paths.min_pow_bits
+        guards = {ids.encode_nid(pub) for pub in getattr(self.runtime.guards, "pubs", [])}
+
+        out: list[dict[str, Any]] = []
+        for relay in self.runtime.directory.candidates(now=now):
+            address = ids.encode_nid(relay.pub)
+            age = relay.observed_for(now)
+            falta = max(0.0, MIN_OBSERVED_AGE - age)
+            if relay.pow_bits < floor:
+                estado, detalle = "rechazado", "no hizo bastante trabajo (§10)"
+            elif not relay.prefixes:
+                estado, detalle = "rechazado", "su dirección no se puede comparar con otras"
+            elif falta > 0:
+                estado, detalle = "esperando", f"usable en {falta / 60:.0f} min"
+            else:
+                estado, detalle = "usable", "puede llevar circuitos"
+            out.append(
+                {
+                    "address": address,
+                    "short": ids.short(address),
+                    "endpoint": relay.observed or (relay.endpoints[0] if relay.endpoints else ""),
+                    "observed_for": round(age),
+                    "state": estado,
+                    "detail": detalle,
+                    "guard": address in guards,
+                    "operator": next(iter(relay.prefixes), ""),
+                }
+            )
+        order = {"usable": 0, "esperando": 1, "rechazado": 2}
+        return sorted(out, key=lambda c: (order[c["state"]], -c["observed_for"]))
+
     # ----------------------------------------------------------------- estado
     def describe(self) -> dict[str, Any]:
         """Everything the panel needs, including what is missing and for how long."""
@@ -658,5 +701,6 @@ class ControlPanel:
             "why_not_ready": missing["why"],
             "network": missing,
             "portal": self.portal,
+            "cells": self.cells(),
             "last_error": self._last_error,
         }
