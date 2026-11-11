@@ -194,6 +194,24 @@ class LocalUI:
             return self._panel_config()
         return self._serve_from(self.panel_root, name)
 
+    async def _hud_config(self, request: web.Request) -> web.StreamResponse:
+        """El token, para que la página pueda ponerlo en una cabecera.
+
+        Sin esto, el tablero sólo tenía la cookie —que es `httpOnly` a
+        propósito— y toda acción que cambia algo le contestaba 403: la casilla
+        de semillas y el chat estaban rotos desde el propio navegador.
+
+        No debilita la defensa contra CSRF, que es para lo que existe: una
+        página de otro origen no puede leer este fichero. Lo que la regla de
+        la cabecera impide es que un formulario ajeno accione algo con tu
+        cookie, y eso sigue igual.
+        """
+        return self._token_script()
+
+    def _token_script(self) -> web.StreamResponse:
+        body = f"window.NCELL_API='';window.NCELL_TOKEN={json.dumps(self.token)};\n"
+        return web.Response(text=body, content_type="application/javascript", charset="utf-8")
+
     def _panel_config(self) -> web.StreamResponse:
         """Where to call and with what, as a served script rather than inline.
 
@@ -204,8 +222,7 @@ class LocalUI:
         the token comes back as a file instead — generated per request, never
         written to disk.
         """
-        body = f"window.NCELL_API='';window.NCELL_TOKEN={json.dumps(self.token)};\n"
-        return web.Response(text=body, content_type="application/javascript", charset="utf-8")
+        return self._token_script()
 
     async def _static(self, request: web.Request) -> web.StreamResponse:
         return self._serve_from(_HUD_ROOT, request.match_info["name"])
@@ -412,6 +429,7 @@ class LocalUI:
         app.add_routes(
             [
                 web.get("/", self._index),
+                web.get("/config.js", self._hud_config),
                 web.get("/static/{name}", self._static),
                 web.get("/api/state", self._state),
                 web.get("/api/search", self._search),

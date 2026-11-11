@@ -345,7 +345,14 @@ async function chatCall(path, body) {
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
     credentials: "same-origin",
-    headers: body ? { "Content-Type": "application/json" } : {},
+    headers: {
+      // En cabecera y no sólo en la cookie: lo que cambia algo exige el token
+      // donde una página de otro origen no puede ponerlo. Sin esto, la
+      // casilla de semillas y el chat contestaban 403 desde el propio
+      // tablero, que es el único sitio desde el que se usan.
+      "X-Nullcell-Token": window.NCELL_TOKEN || "",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const payload = await response.json().catch(() => ({}));

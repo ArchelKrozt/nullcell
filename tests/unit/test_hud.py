@@ -293,3 +293,37 @@ def test_cells_are_painted_with_textContent_not_html():
     bloque = js[js.index("function pintarRed") :]
     assert "innerHTML" not in bloque
     assert "textContent" in bloque
+
+
+# ------------------- M10: el tablero necesita el token para poder accionar
+async def test_the_dashboard_is_given_the_token_for_mutations(client):
+    """Las acciones que cambian algo exigen el token en cabecera, y el tablero
+    sólo tenía la cookie —`httpOnly` a propósito—, así que la casilla de
+    semillas y el chat contestaban **403 desde el propio navegador**."""
+    response = await client.get(
+        "/config.js", headers={**loopback(9180), TOKEN_HEADER: client.ui.token}
+    )
+    assert response.status == 200
+    assert "javascript" in response.headers["Content-Type"]
+    assert client.ui.token in await response.text()
+
+
+async def test_that_token_still_needs_the_usual_permission(client):
+    """Servirlo no lo regala: sigue detrás del mismo guardia que todo lo demás."""
+    assert (await client.get("/config.js", headers=loopback(9180))).status == 401
+    assert (
+        await client.get(
+            "/config.js", headers={"Host": "evil.example.com:9180", TOKEN_HEADER: client.ui.token}
+        )
+    ).status == 403
+
+
+def test_the_page_loads_its_config_before_the_app():
+    """Al revés, `window.NCELL_TOKEN` no existiría cuando el script lo lee."""
+    html = (HUD_ROOT / "index.html").read_text(encoding="utf-8")
+    assert html.index('src="/config.js"') < html.index('src="/static/app.js"')
+
+
+def test_every_api_call_from_the_dashboard_carries_the_header():
+    js = (HUD_ROOT / "app.js").read_text(encoding="utf-8")
+    assert '"X-Nullcell-Token": window.NCELL_TOKEN' in js
