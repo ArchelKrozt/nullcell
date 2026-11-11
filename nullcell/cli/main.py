@@ -15,6 +15,7 @@ from nullcell.core import config, ids
 from nullcell.core.frames import Cmd
 from nullcell.core.identity import Identity
 from nullcell.net.link import PROTOCOL_VERSIONS
+from nullcell.onion.path_select import CIRCUIT_LENGTH
 
 app = typer.Typer(
     add_completion=False,
@@ -244,7 +245,17 @@ async def _transient_node(identity, seeds):
     return node
 
 
-async def _runtime(identity, cfg, *, endpoints=None, seeds=None, listen=None, anonymous=False):
+async def _runtime(
+    identity,
+    cfg,
+    *,
+    endpoints=None,
+    seeds=None,
+    listen=None,
+    anonymous=False,
+    hops=CIRCUIT_LENGTH,
+    min_age=None,
+):
     """Assemble a cell, join the network, and learn which relays exist.
 
     Every command that touches the network goes through here, so §7's guard
@@ -260,7 +271,9 @@ async def _runtime(identity, cfg, *, endpoints=None, seeds=None, listen=None, an
     """
     from nullcell.cli.runtime import Runtime
 
-    runtime = Runtime.assemble(identity, config.home(), endpoints=endpoints)
+    runtime = Runtime.assemble(
+        identity, config.home(), endpoints=endpoints, hops=hops, min_age=min_age
+    )
     if listen is not None:
         await runtime.listen(*listen)
 
@@ -352,6 +365,18 @@ def cmd_node(
             help="carpeta de despliegue: publica sus portales sin interfaz gráfica",
         ),
     ] = None,
+    hops: Annotated[
+        str,
+        typer.Option(
+            "--hops",
+            help="saltos por circuito: 1-5, o 'auto'. Quien publica sólo puede "
+            "usar N-1 relevos, porque su propia celda no cuenta",
+        ),
+    ] = "3",
+    min_age: Annotated[
+        float,
+        typer.Option("--min-age", min=0, max=120, help="minutos observando un relevo"),
+    ] = 10.0,
 ) -> None:
     """Arranca una celda completa: enlace, DHT, circuitos y mantenimiento.
 
@@ -361,6 +386,8 @@ def cmd_node(
     que en una Pi la vía es ésta.
     """
     identity, cfg = _load_identity()
+    saltos = _parse_hops(hops)
+    _warn_if_not_anonymous(saltos, min_age)
 
     # La dirección .null *es* la clave (§3): un despliegue que lleva la suya
     # conserva su nombre al mudarse de máquina.
@@ -387,7 +414,13 @@ def cmd_node(
     async def run() -> None:
         typer.secho(f"✓ {identity.short} escuchando en [{host}]:{port}", fg=typer.colors.GREEN)
         runtime = await _runtime(
-            identity, cfg, endpoints=endpoints, seeds=_seeds(seed), listen=(host, port)
+            identity,
+            cfg,
+            endpoints=endpoints,
+            seeds=_seeds(seed),
+            listen=(host, port),
+            hops=saltos,
+            min_age=min_age * 60.0,
         )
         typer.echo(f"  dirección: {identity.hostname}")
         typer.echo(f"  anuncia:   {', '.join(endpoints)}")
