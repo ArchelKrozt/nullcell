@@ -675,7 +675,10 @@ async def test_each_cell_says_why_it_is_or_is_not_usable(tmp_path):
     por_estado = {c["state"]: c for c in p.cells()}
     try:
         assert por_estado["usable"]["endpoint"] == "203.0.113.9:4433"
-        assert "min" in por_estado["esperando"]["detail"]
+        # En segundos, no en texto: la cuenta atrás corre en la página, y
+        # «usable en 10 min» no se movía nunca y parecía colgado.
+        assert 0 < por_estado["esperando"]["usable_in"] <= 600
+        assert por_estado["usable"]["usable_in"] == 0
         assert "trabajo" in por_estado["rechazado"]["detail"]
         # Lo que se puede usar, primero.
         assert p.cells()[0]["state"] == "usable"

@@ -664,7 +664,9 @@ class ControlPanel:
             elif not relay.prefixes:
                 estado, detalle = "rechazado", "su dirección no se puede comparar con otras"
             elif falta > 0:
-                estado, detalle = "esperando", f"usable en {falta / 60:.0f} min"
+                # En segundos, no en texto: la página cuenta hacia atrás sola.
+                # «usable en 10 min» no se movía nunca y parecía colgado.
+                estado, detalle = "esperando", ""
             else:
                 estado, detalle = "usable", "puede llevar circuitos"
             out.append(
@@ -673,6 +675,7 @@ class ControlPanel:
                     "short": ids.short(address),
                     "endpoint": relay.observed or (relay.endpoints[0] if relay.endpoints else ""),
                     "observed_for": round(age),
+                    "usable_in": round(falta) if estado == "esperando" else 0,
                     "state": estado,
                     "detail": detalle,
                     "guard": address in guards,

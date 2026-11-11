@@ -460,6 +460,35 @@ function paso(estado, titulo, texto) {
   return box;
 }
 
+/* La cuenta atrás corre en la página, no en el servidor: pedirla cada cuatro
+ * segundos daría un número que salta, y «usable en 10 min» no se movía nunca
+ * y parecía colgado. Se guarda el instante en que vence y se repinta cada
+ * segundo desde ahí. */
+let vence = new Map();
+let venceRed = null;
+
+function cuentaAtras(segundos) {
+  if (segundos <= 0) return "ya";
+  const m = Math.floor(segundos / 60);
+  const s = Math.floor(segundos % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function tic() {
+  const ahora = Date.now();
+  for (const [nodo, cuando] of vence) {
+    if (!nodo.isConnected) { vence.delete(nodo); continue; }
+    const quedan = Math.max(0, (cuando - ahora) / 1000);
+    nodo.textContent = quedan > 0 ? `usable en ${cuentaAtras(quedan)}` : "ya cumplió, comprobando…";
+  }
+  const total = el("countdown");
+  if (total && venceRed !== null) {
+    const quedan = Math.max(0, (venceRed - ahora) / 1000);
+    total.textContent = quedan > 0 ? ` — faltan ${cuentaAtras(quedan)}` : "";
+  }
+}
+setInterval(tic, 1000);
+
 function pintarRed(control) {
   const net = control.network || {};
   const cells = control.cells || [];
@@ -486,10 +515,17 @@ function pintarRed(control) {
       `y hacen falta ${hacenFalta}. Necesitas la semilla de otra máquina, de otro sitio.`;
   } else {
     red.verdict.className = "verdict wait";
-    red.verdict.textContent =
-      `Ya sólo hay que esperar: ${esperando} celda${esperando === 1 ? "" : "s"} ` +
-      "cumpliendo sus 10 minutos de antigüedad.";
+    red.verdict.replaceChildren(
+      document.createTextNode(
+        `Ya sólo hay que esperar: ${esperando} celda${esperando === 1 ? "" : "s"} ` +
+          "cumpliendo sus 10 minutos de antigüedad",
+      ),
+      Object.assign(document.createElement("span"), { id: "countdown" }),
+    );
+    const falta = net.ready_in;
+    venceRed = falta === null || falta === undefined ? null : Date.now() + falta * 1000;
   }
+  if (control.paths_ready || conocidas === 0 || operadores < hacenFalta) venceRed = null;
 
   // 2. ¿Qué falta, en orden?
   red.steps.replaceChildren(
@@ -512,6 +548,7 @@ function pintarRed(control) {
 
   // 3. ¿Quién hay?
   red.cells.replaceChildren();
+  vence = new Map();
   if (!cells.length) return;
   for (const c of cells) {
     const row = document.createElement("div");
@@ -530,10 +567,19 @@ function pintarRed(control) {
     tag.textContent = c.state;
     const why = document.createElement("span");
     why.className = "why";
-    why.textContent = `${c.endpoint || "sin dirección"} — ${c.detail}`;
+    const donde = document.createTextNode(`${c.endpoint || "sin dirección"} — `);
+    const que = document.createElement("span");
+    if (c.state === "esperando") {
+      vence.set(que, Date.now() + (c.usable_in || 0) * 1000);
+      que.textContent = `usable en ${cuentaAtras(c.usable_in || 0)}`;
+    } else {
+      que.textContent = c.detail;
+    }
+    why.append(donde, que);
     row.append(who, tag, why);
     red.cells.append(row);
   }
+  tic(); // sin esperar al primer segundo: si no, el reloj nace vacío
 }
 
 red.form.addEventListener("submit", async (event) => {
