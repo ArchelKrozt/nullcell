@@ -246,8 +246,19 @@ empieza a usar tres saltos **en cuanto aparece el tercer operador**, sin reinici
 operadores distintos y no máquinas: tres relevos del mismo proveedor son un salto, o «auto» sería
 una forma de creerse anónimo detrás de una sola empresa.
 
-El aviso en magenta desaparece solo cuando llega a tres. Y `auto` nunca es el valor por defecto:
-renunciar al anonimato es una decisión que se toma, no un estado al que se llega sin querer.
+El aviso en magenta desaparece solo cuando llega a tres.
+
+**`auto` es el valor por defecto del escritorio**, y lo es por una razón concreta: quien abre
+`Nullcell.command` con doble clic no puede pasar flags, así que todo lo que haya que escribir en
+una terminal es algo que esa persona no va a tener. Y `auto` **nunca da menos anonimato del que la
+red permite** — usa el máximo disponible en cada momento y lo sube solo.
+
+Lo que no puede ser un valor por defecto es un número bajo **fijo**: ése dejaría una red madura
+corriendo sin anonimato para siempre porque nadie volvió a cambiarlo.
+
+`ncell node`, en cambio, sigue pidiendo 3. Un servidor se configura a mano y se deja corriendo
+meses: ahí el estricto debe ser el valor por defecto, y relajarlo una decisión escrita en el
+comando.
 
 **El precio está escrito y no se puede no ver:** con un salto, ese único relevo ve tu IP y a qué
 portal vas, las dos cosas a la vez. Con dos, el primero sabe quién eres y el segundo adónde vas, y

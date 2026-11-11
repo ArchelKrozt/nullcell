@@ -979,10 +979,10 @@ def cmd_desktop(
         str,
         typer.Option(
             "--hops",
-            help="saltos por circuito: 1-5, o 'auto' para usar los que la red "
-            "permita y encender la privacidad sola al llegar a 3",
+            help="saltos por circuito: 1-5, o 'auto' (por defecto) para usar los "
+            "que la red permita y encender la privacidad sola al llegar a 3",
         ),
-    ] = "3",
+    ] = "auto",
     min_age: Annotated[
         float,
         typer.Option(

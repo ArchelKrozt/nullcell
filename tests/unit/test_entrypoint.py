@@ -242,3 +242,51 @@ def test_joining_the_network_never_takes_the_node_down():
     source = code_of(NodeThread._join_network)
     assert "except Exception" in source
     assert "_save_peers" in source
+
+
+# ------------------- M10: el doble clic tiene que venir listo
+def test_the_desktop_adapts_to_the_network_by_default():
+    """Quien abre `Nullcell.command` no puede pasar flags, así que todo lo que
+    haya que escribir en la terminal es algo que esa persona no tendrá.
+
+    `auto` es un buen valor por defecto precisamente porque **nunca da menos
+    anonimato del que la red permite**: usa el máximo disponible en cada
+    momento y lo sube solo. Lo que no puede ser el valor por defecto es un
+    número bajo fijo, que dejaría una red madura corriendo sin anonimato para
+    siempre.
+    """
+    import inspect
+
+    from nullcell.cli import main
+
+    firma = inspect.signature(main.cmd_desktop)
+    assert firma.parameters["hops"].default == "auto"
+
+
+def test_a_server_node_still_asks_for_three():
+    """Un servidor se configura a mano y se deja corriendo meses: ahí el valor
+    por defecto debe ser el estricto, y relajarlo una decisión escrita."""
+    import inspect
+
+    from nullcell.cli import main
+
+    assert inspect.signature(main.cmd_node).parameters["hops"].default == "3"
+
+
+def test_the_warning_is_still_loud_while_it_lasts(capsys):
+    """Un valor por defecto adaptativo sólo es honesto si dice cuándo no está
+    protegiendo. Se comprueba llamando, no leyendo el fuente: la primera
+    versión de este test miraba el código con un `or True` detrás, que es una
+    forma elaborada de no comprobar nada."""
+    from nullcell.cli.main import _warn_if_not_anonymous
+
+    _warn_if_not_anonymous("auto")
+    dicho = capsys.readouterr().err
+    assert "menos de 3 operadores" in dicho
+    assert "NO hay anonimato" in dicho
+
+    _warn_if_not_anonymous(1)
+    assert "SIN ANONIMATO" in capsys.readouterr().err
+
+    _warn_if_not_anonymous(3)
+    assert capsys.readouterr().err.strip() == "", "con tres saltos no hay nada que avisar"
