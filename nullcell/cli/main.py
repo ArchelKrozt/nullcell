@@ -277,12 +277,22 @@ async def _runtime(identity, cfg, *, endpoints=None, seeds=None, listen=None, an
     return runtime
 
 
-def _warn_if_not_anonymous(hops: int) -> None:
+def _warn_if_not_anonymous(hops: int, min_age: float = 10.0) -> None:
     """Decirlo al arrancar, en rojo, antes de que empiece nada."""
-    from nullcell.onion.path_select import anonymity_warning
+    from nullcell.onion.path_select import MIN_OBSERVED_AGE, anonymity_warning
 
     if warning := anonymity_warning(hops):
         typer.secho(f"\n⚠  {warning}\n", fg=typer.colors.RED, bold=True, err=True)
+    if min_age * 60.0 < MIN_OBSERVED_AGE:
+        typer.secho(
+            f"⚠  Suelo de antigüedad bajado a {min_age:g} min (lo normal son "
+            f"{MIN_OBSERVED_AGE / 60:.0f}). Ese plazo encarece inundar la red de "
+            "identidades nuevas, porque no se puede falsificar el tiempo que TÚ "
+            "llevas viendo a alguien. En una red de máquinas tuyas no protege de "
+            "nada; en una red abierta, sí.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
 
 
 def _require_paths(runtime) -> None:
@@ -917,6 +927,16 @@ def cmd_desktop(
             "para probar una red que aún no tiene 3 operadores",
         ),
     ] = 3,
+    min_age: Annotated[
+        float,
+        typer.Option(
+            "--min-age",
+            min=0,
+            max=120,
+            help="minutos que hay que observar un relevo antes de usarlo. "
+            "Encarece inundar la red; en una red tuya sólo hace esperar",
+        ),
+    ] = 10.0,
     log_level: Annotated[str, typer.Option("--log-level")] = "warning",
 ) -> None:
     """Icono en la barra de menús, panel con interruptores y navegador (§9).
@@ -928,7 +948,7 @@ def cmd_desktop(
     from nullcell.cli.logging_setup import setup as setup_logging
 
     setup_logging(log_level)
-    _warn_if_not_anonymous(hops)
+    _warn_if_not_anonymous(hops, min_age)
     try:
         from nullcell.desktop.app import run
     except ImportError:
@@ -947,6 +967,7 @@ def cmd_desktop(
             lan=lan,
             config=config_dir,
             hops=hops,
+            min_age=min_age * 60.0,
         )
     )
 

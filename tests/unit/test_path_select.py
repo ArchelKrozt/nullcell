@@ -362,3 +362,39 @@ def test_only_our_own_observation_is_written_not_the_descriptor(tmp_path):
     guardado = json.loads(archivo.read_text())
     assert all(isinstance(v, (int, float)) for v in guardado.values())
     assert "62.171.160.130" not in archivo.read_text(), "el endpoint no se guarda"
+
+
+# ------------------ M10: el suelo de antigüedad, ajustable y explicado
+def test_the_age_floor_can_be_lowered(tmp_path):
+    """En una red de tres máquinas tuyas, diez minutos no protegen de nada:
+    el suelo encarece inundar la red de identidades nuevas, y nadie va a
+    inundar una red en la que todos los nodos son suyos."""
+    recientes = directory_of(
+        *[candidate(f"62.{171 + i}.160.130", first_seen=time.time() - 30) for i in range(3)]
+    )
+    estricto = PathBuilder(recientes, GuardSet(tmp_path / "a.json"))
+    assert not estricto.ready
+
+    flexible = PathBuilder(recientes, GuardSet(tmp_path / "b.json"), min_age=0)
+    assert flexible.ready
+    assert len(flexible.build()) == 3
+
+
+def test_the_default_floor_is_still_ten_minutes(tmp_path):
+    """Bajarlo es una decisión que se toma, no el estado de fábrica."""
+    paths = PathBuilder(RelayDirectory(), GuardSet(tmp_path / "g.json"))
+    assert paths.min_age == MIN_OBSERVED_AGE == 600.0
+
+
+def test_the_message_counts_with_the_floor_that_is_in_use(tmp_path):
+    """Decir «10 min» cuando el suelo son 2 manda a esperar el óctuple."""
+    recientes = directory_of(
+        *[candidate(f"62.{171 + i}.160.130", first_seen=time.time() - 30) for i in range(3)]
+    )
+    paths = PathBuilder(recientes, GuardSet(tmp_path / "g.json"), min_age=120)
+    assert "2 min" in paths.why_not_ready()
+    assert paths.missing()["ready_in"] is not None
+
+
+def test_a_negative_floor_is_clamped(tmp_path):
+    assert PathBuilder(RelayDirectory(), GuardSet(tmp_path / "g.json"), min_age=-5).min_age == 0.0

@@ -242,6 +242,34 @@ que alguien puso una vez y olvidó.
 
 El valor por defecto sigue siendo 3, y lo seguirá siendo.
 
+#### La aritmética que sorprende: una celda no se cuenta a sí misma
+
+Con **N máquinas** en la red, quien **publica** un portal sólo tiene **N−1** relevos por los que
+pasar — el suyo no cuenta, porque un servicio que usara su propio nodo como punto de enlace
+estaría anunciando su propia dirección, que es lo contrario de un portal oculto.
+
+| máquinas en la red | quien navega | quien publica |
+|---|---|---|
+| 3 | hasta 3 saltos | hasta **2** |
+| 4 | hasta 4 | hasta 3 |
+
+Así que con tres máquinas, el lado que publica necesita `--hops 2`. Con cuatro, los tres saltos
+funcionan en los dos lados.
+
+#### `--min-age`: los 10 minutos
+
+Un relevo no se usa hasta que **tu** celda lo ha observado 10 minutos. No es burocracia: no se
+puede falsificar el tiempo que tú llevas viendo a alguien, así que ese plazo encarece inundar la
+red de identidades nuevas (§7, §10).
+
+En una red de tres máquinas tuyas no protege de nada y sólo hace esperar:
+
+```bash
+ncell desktop --hops 1 --min-age 0
+```
+
+Se avisa al arrancar, como todo lo que se relaja. En una red abierta, déjalo donde está.
+
 ### Lo que compartir ancho de banda hace, y lo que no
 
 Compartir te convierte en **relevo**: ayudas a otros a construir circuitos. **No te conecta a la

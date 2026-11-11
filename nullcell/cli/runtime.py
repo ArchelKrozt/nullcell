@@ -81,6 +81,7 @@ class Runtime:
         endpoints: list[str] | None = None,
         min_pow_bits: int = MIN_RELAY_POW,
         hops: int = CIRCUIT_LENGTH,
+        min_age: float | None = None,
     ) -> Runtime:
         node = KademliaNode(identity, DirectTransport(), endpoints=endpoints or [])
         relay = RelayService(identity.x25519_private)
@@ -98,7 +99,13 @@ class Runtime:
             relay=relay,
             directory=directory,
             guards=guards,
-            paths=PathBuilder(directory, guards, min_pow_bits=min_pow_bits, hops=hops),
+            paths=PathBuilder(
+                directory,
+                guards,
+                min_pow_bits=min_pow_bits,
+                hops=hops,
+                **({} if min_age is None else {"min_age": min_age}),
+            ),
             circuits=CircuitManager(),
             publisher=Publisher(identity, node),
             resolver=Resolver(node, hosts_file=home / "hosts"),

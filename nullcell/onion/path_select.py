@@ -266,9 +266,22 @@ class GuardSet:
             log.info("guard retired: %s", ids.short(ids.encode_nid(pub)))
             self.save()
 
-    def ensure(self, candidates: list[RelayCandidate], *, now: float | None = None) -> list[bytes]:
-        """Top the guard set up from *candidates*, keeping what is already pinned."""
+    def ensure(
+        self,
+        candidates: list[RelayCandidate],
+        *,
+        now: float | None = None,
+        min_age: float | None = None,
+    ) -> list[bytes]:
+        """Top the guard set up from *candidates*, keeping what is already pinned.
+
+        `min_age` llega desde fuera por la misma razón que a `select_path`: el
+        suelo es una decisión del nodo, y tenerlo fijado aquí hacía que bajarlo
+        sirviera para el resto de la ruta pero no para el guard —y entonces no
+        había ruta, con un mensaje sobre guards que no explicaba nada.
+        """
         now = time.time() if now is None else now
+        min_age = MIN_OBSERVED_AGE if min_age is None else min_age
         for pub in self.expired(now):
             self.retire(pub)
 
@@ -276,9 +289,7 @@ class GuardSet:
             return self.pubs
 
         usable = [
-            c
-            for c in candidates
-            if c.pub not in self._guards and c.observed_for(now) >= MIN_OBSERVED_AGE
+            c for c in candidates if c.pub not in self._guards and c.observed_for(now) >= min_age
         ]
         # Diverse from the guards we already have: two guards behind the same
         # operator is one guard with extra steps.
@@ -335,6 +346,7 @@ def select_path(
     guards: GuardSet,
     *,
     length: int = CIRCUIT_LENGTH,
+    min_age: float = MIN_OBSERVED_AGE,
     min_pow_bits: int = 0,
     now: float | None = None,
     rng: random.Random | None = None,
@@ -346,12 +358,13 @@ def select_path(
     is worse than no circuit, because the user believes they have one.
     """
     now = time.time() if now is None else now
+    min_age = MIN_OBSERVED_AGE if min_age is None else min_age
     rng = rng or random.Random()
 
     usable = [
         c
         for c in candidates
-        if c.pow_bits >= min_pow_bits and c.observed_for(now) >= MIN_OBSERVED_AGE and c.prefixes
+        if c.pow_bits >= min_pow_bits and c.observed_for(now) >= min_age and c.prefixes
     ]
     if len(usable) < length:
         # Say which floor was not met. The first version blamed age and work
@@ -359,17 +372,17 @@ def select_path(
         # looking in entirely the wrong place.
         total = len(candidates)
         no_prefix = sum(1 for c in candidates if not c.prefixes)
-        too_young = sum(1 for c in candidates if c.observed_for(now) < MIN_OBSERVED_AGE)
+        too_young = sum(1 for c in candidates if c.observed_for(now) < min_age)
         too_cheap = sum(1 for c in candidates if c.pow_bits < min_pow_bits)
         raise PathError(
             f"{len(usable)} of {total} relays are usable, {length} needed. "
             f"Excluded: {too_young} too recently observed "
-            f"(§7 requires {MIN_OBSERVED_AGE / 60:.0f} min), "
+            f"(el suelo son {min_age / 60:.0f} min), "
             f"{too_cheap} below the proof-of-work floor, "
             f"{no_prefix} with no comparable endpoint"
         )
 
-    guards.ensure(usable, now=now)
+    guards.ensure(usable, now=now, min_age=min_age)
     guard_pool = [c for c in usable if guards.is_guard(c.pub)]
     if not guard_pool:
         raise PathError("no usable pinned guard: none of them is reachable right now")
@@ -501,14 +514,21 @@ class RelayDirectory:
         """
         return self._relays.get(pub)
 
-    def usable(self, *, min_pow_bits: int = 0, now: float | None = None) -> list[RelayCandidate]:
+    def usable(
+        self,
+        *,
+        min_pow_bits: int = 0,
+        now: float | None = None,
+        min_age: float | None = None,
+    ) -> list[RelayCandidate]:
         """Candidates past the age and work floors of §7."""
         now = time.time() if now is None else now
+        min_age = MIN_OBSERVED_AGE if min_age is None else min_age
         return [
             relay
             for relay in self._relays.values()
             if relay.pow_bits >= min_pow_bits
-            and relay.observed_for(now) >= MIN_OBSERVED_AGE
+            and relay.observed_for(now) >= min_age
             and relay.prefixes
         ]
 
@@ -541,6 +561,7 @@ class PathBuilder:
         min_pow_bits: int = 0,
         rng: random.Random | None = None,
         hops: int = CIRCUIT_LENGTH,
+        min_age: float | None = None,
     ) -> None:
         self.directory = directory
         self.guards = guards
@@ -555,6 +576,19 @@ class PathBuilder:
         #: nunca podría existir una red nueva. Quien lo baja ve el aviso en
         #: cada sitio donde se nota, y `anonymous` dice que no.
         self.hops = max(1, int(hops))
+        #: Cuánto hay que haber observado un relevo antes de enrutar por él.
+        #: Encarece inundar la red de identidades nuevas, porque no se puede
+        #: falsificar el tiempo que **tú** llevas viendo a alguien. En una red
+        #: de tres máquinas tuyas no protege de nada y sólo hace esperar, así
+        #: que se puede bajar — diciéndolo.
+        self._min_age = None if min_age is None else max(0.0, float(min_age))
+
+    @property
+    def min_age(self) -> float:
+        """El suelo en uso. Se resuelve al leerlo, no al construir, para que
+        sustituir la constante —como hacen varios tests— siga surtiendo
+        efecto: un valor por defecto se fija en el momento del `def`."""
+        return MIN_OBSERVED_AGE if self._min_age is None else self._min_age
 
     def build(self, *, length: int | None = None, ending_at: Hop | None = None) -> list[Hop]:
         """A path of *length* hops, optionally ending at a given relay.
@@ -570,6 +604,7 @@ class PathBuilder:
                 self.guards,
                 length=length,
                 min_pow_bits=self.min_pow_bits,
+                min_age=self.min_age,
                 rng=self.rng,
             )
 
@@ -578,6 +613,7 @@ class PathBuilder:
             self.guards,
             length=length - 1,
             min_pow_bits=self.min_pow_bits,
+            min_age=self.min_age,
             rng=self.rng,
         )
         taken = {p for hop in prefix for p in _hop_prefixes(hop)}
@@ -590,7 +626,8 @@ class PathBuilder:
 
     @property
     def ready(self) -> bool:
-        return len(self.directory.usable(min_pow_bits=self.min_pow_bits)) >= self.hops
+        usable = self.directory.usable(min_pow_bits=self.min_pow_bits, min_age=self.min_age)
+        return len(usable) >= self.hops
 
     @property
     def anonymous(self) -> bool:
@@ -613,13 +650,13 @@ class PathBuilder:
         """
         now = time.time() if now is None else now
         known = self.directory.candidates(now=now)
-        usable = self.directory.usable(min_pow_bits=self.min_pow_bits, now=now)
+        usable = self.directory.usable(
+            min_pow_bits=self.min_pow_bits, now=now, min_age=self.min_age
+        )
         waiting = sorted(
-            MIN_OBSERVED_AGE - c.observed_for(now)
+            self.min_age - c.observed_for(now)
             for c in known
-            if c.pow_bits >= self.min_pow_bits
-            and c.prefixes
-            and c.observed_for(now) < MIN_OBSERVED_AGE
+            if c.pow_bits >= self.min_pow_bits and c.prefixes and c.observed_for(now) < self.min_age
         )
 
         # Enough *operators*, not enough relays: §7 counts distinct prefixes,
@@ -657,7 +694,9 @@ class PathBuilder:
         if total == 0:
             return "no se conoce ningún relevo todavía: hace falta una semilla (§7)"
 
-        usable = len(self.directory.usable(min_pow_bits=self.min_pow_bits, now=now))
+        usable = len(
+            self.directory.usable(min_pow_bits=self.min_pow_bits, now=now, min_age=self.min_age)
+        )
         if usable >= self.hops:
             return ""
 
@@ -682,7 +721,7 @@ class PathBuilder:
             )
         return (
             f"{total} relevos conocidos, {usable} usables. §7 exige "
-            f"{MIN_OBSERVED_AGE / 60:.0f} min de antigüedad observada, "
+            f"{self.min_age / 60:.0f} min de antigüedad observada, "
             "así que ya sólo hay que esperar"
         )
 
