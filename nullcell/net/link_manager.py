@@ -9,6 +9,7 @@ enters the cache.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Final
@@ -60,6 +61,12 @@ class _Held:
     stack: AsyncExitStack
 
 
+def _is_dead(held: _Held) -> bool:
+    """Whether the QUIC connection under a cached link has ended."""
+    closed = getattr(held.link, "closed", None)
+    return closed is not None and closed.done()
+
+
 class LinkManager:
     """Opens, verifies, caches and closes links to peers."""
 
@@ -85,14 +92,21 @@ class LinkManager:
     async def connect(self, pub: bytes, endpoints: list[str], *, timeout: float = 5.0) -> StreamMux:
         """Return a verified link to *pub*, opening one if needed."""
         held = self._links.get(pub)
-        if held is not None:
+        if held is not None and not _is_dead(held):
             return held.mux
 
         lock = self._locks.setdefault(pub, asyncio.Lock())
         async with lock:
             held = self._links.get(pub)  # another waiter may have opened it
             if held is not None:
-                return held.mux
+                if not _is_dead(held):
+                    return held.mux
+                # QUIC closes a link after 60 s of silence (idle_timeout). The
+                # cache outlived it, so every request went to a dead link,
+                # failed, and after three failures the peer was dropped from
+                # the routing table: a long-running relay forgot its seeds a
+                # few minutes after joining. A dead link is replaced, not reused.
+                await self._discard(pub, held)
 
             nid = ids.encode_nid(pub)
             last: Exception | None = None
@@ -134,6 +148,15 @@ class LinkManager:
             return
         held.mux.close()
         await held.stack.aclose()
+
+    async def _discard(self, pub: bytes, held: _Held) -> None:
+        """Drop a dead link while holding its lock (unlike :meth:`disconnect`,
+        the lock stays, so waiters queued on it keep a single opener)."""
+        if self._links.get(pub) is held:
+            del self._links[pub]
+        held.mux.close()
+        with contextlib.suppress(Exception):
+            await held.stack.aclose()
 
     async def close(self) -> None:
         for pub in list(self._links):

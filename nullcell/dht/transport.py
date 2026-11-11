@@ -70,10 +70,21 @@ class DirectTransport:
             raise TransportError(f"{node.short} has no known endpoint")
         try:
             mux = await self.links.connect(node.pub, node.endpoints, timeout=timeout)
-            return await mux.request(request, timeout=timeout)
         except TransportError:
             raise
         except Exception as exc:
+            raise TransportError(f"rpc to {node.short} failed: {exc}") from exc
+        try:
+            return await mux.request(request, timeout=timeout)
+        except Exception as exc:
+            # A link can die without saying so (a NAT mapping expires, the
+            # peer restarts). Keeping it would fail every retry the same way
+            # and get a live peer dropped from the table; the next attempt
+            # opens a fresh one instead.
+            if self.links.get(node.pub) is mux:
+                await self.links.disconnect(node.pub)
+            if isinstance(exc, TransportError):
+                raise
             raise TransportError(f"rpc to {node.short} failed: {exc}") from exc
 
     async def close(self) -> None:
