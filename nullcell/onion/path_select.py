@@ -389,6 +389,24 @@ def select_path(
 
     guards.ensure(usable, now=now, min_age=min_age)
     guard_pool = [c for c in usable if guards.is_guard(c.pub)]
+
+    if not guard_pool:
+        # Ninguno de los guards fijados está entre los usables: se han ido de
+        # la red, o su descriptor caducó. §7 los fija para **no rotarlos
+        # constantemente**, que es lo que delata a la larga, no para quedarse
+        # atascado cuando desaparecen: un guard inalcanzable no protege nada y
+        # además impide construir cualquier circuito.
+        #
+        # Se retiran sólo en esta rama, es decir, únicamente cuando la
+        # alternativa es no poder hacer nada. Mientras quede uno vivo, los
+        # demás se conservan aunque estén caídos.
+        vivos = {c.pub for c in usable}
+        for pub in list(guards.pubs):
+            if pub not in vivos:
+                guards.retire(pub)
+        guards.ensure(usable, now=now, min_age=min_age)
+        guard_pool = [c for c in usable if guards.is_guard(c.pub)]
+
     if not guard_pool:
         raise PathError("no usable pinned guard: none of them is reachable right now")
 

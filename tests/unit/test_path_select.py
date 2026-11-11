@@ -460,3 +460,55 @@ def test_the_automatic_warning_says_it_will_fix_itself():
     assert "se activará sola" in anonymity_warning(1, auto=True).lower()
     assert "se activará sola" not in anonymity_warning(1).lower()
     assert anonymity_warning(3, auto=True) == ""
+
+
+# --------- M10: un guard que desaparece no puede bloquear la red entera
+def test_a_vanished_guard_does_not_block_every_circuit(tmp_path):
+    """§7 fija los guards para **no rotarlos constantemente**, que es lo que
+    delata a la larga — no para quedarse atascado cuando desaparecen.
+
+    Visto en la red real: un guard fijado dejó de publicar descriptor y el
+    navegador contestaba «no usable pinned guard» a todo, incluso con otros
+    relevos vivos. Un guard inalcanzable no protege nada y además impedía
+    construir cualquier circuito.
+    """
+    import json
+
+    from nullcell.core import ids
+
+    fantasma = ids.encode_nid(b"\xee" * 32)
+    archivo = tmp_path / "g.json"
+    archivo.write_text(json.dumps({fantasma: time.time()}))
+
+    vivo = candidate("62.171.160.130", first_seen=OLD)
+    paths = PathBuilder(directory_of(vivo), GuardSet(archivo), hops="auto", min_age=0)
+
+    assert len(paths.build()) == 1
+    assert fantasma not in {ids.encode_nid(p) for p in GuardSet(archivo).pubs}
+
+
+def test_a_live_guard_is_kept_even_if_another_is_down(tmp_path):
+    """Sólo se retiran cuando la alternativa es no poder hacer nada: mientras
+    quede uno vivo, los demás se conservan aunque estén caídos."""
+    import json
+
+    from nullcell.core import ids
+
+    relays = [candidate(f"62.{171 + i}.160.130", first_seen=OLD) for i in range(3)]
+    archivo = tmp_path / "g.json"
+    ahora = time.time()
+    archivo.write_text(
+        json.dumps({ids.encode_nid(relays[0].pub): ahora, ids.encode_nid(b"\xee" * 32): ahora})
+    )
+
+    paths = PathBuilder(directory_of(*relays), GuardSet(archivo), min_age=0)
+    assert len(paths.build()) == 3
+    # El caído sigue fijado: no hizo falta retirarlo.
+    assert len(GuardSet(archivo).pubs) >= 2
+
+
+def test_with_nothing_usable_the_message_is_still_the_honest_one(tmp_path):
+    """Retirar guards no puede convertirse en inventar una ruta."""
+    paths = PathBuilder(RelayDirectory(), GuardSet(tmp_path / "g.json"), min_age=0)
+    with pytest.raises(PathError):
+        paths.build()
