@@ -80,7 +80,7 @@ class Runtime:
         *,
         endpoints: list[str] | None = None,
         min_pow_bits: int = MIN_RELAY_POW,
-        hops: int = CIRCUIT_LENGTH,
+        hops: int | str = CIRCUIT_LENGTH,
         min_age: float | None = None,
     ) -> Runtime:
         node = KademliaNode(identity, DirectTransport(), endpoints=endpoints or [])

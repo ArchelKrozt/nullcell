@@ -60,7 +60,7 @@ __all__ = [
 CIRCUIT_LENGTH: Final[int] = 3
 
 
-def anonymity_warning(hops: int) -> str:
+def anonymity_warning(hops: int, *, auto: bool = False) -> str:
     """Qué se pierde exactamente con menos de tres saltos.
 
     Escrito una vez y repetido en todas partes a propósito: un modo que
@@ -79,11 +79,16 @@ def anonymity_warning(hops: int) -> str:
             "Con DOS saltos, el primero sabe quién eres y el segundo adónde vas: "
             "entre los dos lo saben todo."
         )
+    cuando = (
+        " Se activará sola en cuanto haya tres operadores distintos."
+        if auto
+        else " Sirve para probar tu propia red; no para esconderte de nadie."
+    )
     return (
         f"SIN ANONIMATO — circuitos de {hops} salto"
         f"{'' if hops == 1 else 's'} en lugar de {CIRCUIT_LENGTH}. "
-        f"{detalle} El contenido sigue cifrado, pero quién habla con quién, no. "
-        "Sirve para probar tu propia red; no para esconderte de nadie."
+        f"{detalle} El contenido sigue cifrado, pero quién habla con quién, no."
+        f"{cuando}"
     )
 
 
@@ -560,7 +565,7 @@ class PathBuilder:
         *,
         min_pow_bits: int = 0,
         rng: random.Random | None = None,
-        hops: int = CIRCUIT_LENGTH,
+        hops: int | str = CIRCUIT_LENGTH,
         min_age: float | None = None,
     ) -> None:
         self.directory = directory
@@ -575,13 +580,42 @@ class PathBuilder:
         #: no tiene tres operadores, así que exigirlos siempre significa que
         #: nunca podría existir una red nueva. Quien lo baja ve el aviso en
         #: cada sitio donde se nota, y `anonymous` dice que no.
-        self.hops = max(1, int(hops))
+        #: `"auto"` usa tantos saltos como la red permita, hasta tres.
+        #:
+        #: Es la respuesta al problema del huevo y la gallina: exigir tres
+        #: operadores siempre significa que una red nueva no puede existir,
+        #: pero fijar un número bajo deja una red madura corriendo sin
+        #: anonimato porque nadie volvió a cambiarlo. Con `auto`, la
+        #: privacidad **se enciende sola** en cuanto hay con qué, y mientras
+        #: tanto se dice claramente que no la hay.
+        #:
+        #: Nunca es el valor por defecto: renunciar al anonimato es una
+        #: decisión que se toma, no un estado al que se llega sin querer.
+        self.auto = isinstance(hops, str) and hops.strip().lower() == "auto"
+        self._hops = CIRCUIT_LENGTH if self.auto else max(1, int(hops))
         #: Cuánto hay que haber observado un relevo antes de enrutar por él.
         #: Encarece inundar la red de identidades nuevas, porque no se puede
         #: falsificar el tiempo que **tú** llevas viendo a alguien. En una red
         #: de tres máquinas tuyas no protege de nada y sólo hace esperar, así
         #: que se puede bajar — diciéndolo.
         self._min_age = None if min_age is None else max(0.0, float(min_age))
+
+    @property
+    def hops(self) -> int:
+        """Los saltos que tendrá el próximo circuito.
+
+        En modo automático sube y baja con la red: se recalcula cada vez que
+        se consulta, así que una celda que lleva horas encendida empieza a
+        construir circuitos de tres en cuanto aparece el tercer operador, sin
+        que nadie reinicie nada.
+        """
+        if not self.auto:
+            return self._hops
+        usable = self.directory.usable(min_pow_bits=self.min_pow_bits, min_age=self.min_age)
+        # Operadores distintos, no máquinas: §7 cuenta prefijos, y tres
+        # relevos del mismo proveedor son un salto, no tres.
+        operators = len({p for c in usable for p in c.prefixes})
+        return max(1, min(CIRCUIT_LENGTH, operators))
 
     @property
     def min_age(self) -> float:
@@ -627,7 +661,10 @@ class PathBuilder:
     @property
     def ready(self) -> bool:
         usable = self.directory.usable(min_pow_bits=self.min_pow_bits, min_age=self.min_age)
-        return len(usable) >= self.hops
+        if self.auto:
+            # Con uno basta: el modo automático nunca pide más de lo que hay.
+            return bool(usable)
+        return len(usable) >= self._hops
 
     @property
     def anonymous(self) -> bool:

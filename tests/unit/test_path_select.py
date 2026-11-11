@@ -398,3 +398,65 @@ def test_the_message_counts_with_the_floor_that_is_in_use(tmp_path):
 
 def test_a_negative_floor_is_clamped(tmp_path):
     assert PathBuilder(RelayDirectory(), GuardSet(tmp_path / "g.json"), min_age=-5).min_age == 0.0
+
+
+# ---------------- M10: saltos automáticos — la privacidad se enciende sola
+def auto_builder(tmp_path, *relays):
+    return PathBuilder(directory_of(*relays), GuardSet(tmp_path / "g.json"), hops="auto", min_age=0)
+
+
+def test_hops_follow_the_network_as_it_grows(tmp_path):
+    """La respuesta al huevo y la gallina: exigir tres operadores siempre
+    significa que una red nueva no puede existir, pero fijar un número bajo
+    deja una red madura corriendo sin anonimato porque nadie lo cambió."""
+    relays = [candidate(f"62.{171 + i}.160.130", first_seen=time.time() - 60) for i in range(4)]
+    esperado = [1, 2, 3, 3]  # nunca más de tres
+    for cuantos, saltos in zip(range(1, 5), esperado, strict=True):
+        paths = auto_builder(tmp_path / f"n{cuantos}", *relays[:cuantos])
+        (tmp_path / f"n{cuantos}").mkdir(exist_ok=True)
+        assert paths.hops == saltos, f"con {cuantos} operadores esperaba {saltos}"
+        assert paths.ready
+        assert len(paths.build()) == saltos
+
+
+def test_privacy_turns_on_by_itself_at_three(tmp_path):
+    relays = [candidate(f"62.{171 + i}.160.130", first_seen=time.time() - 60) for i in range(3)]
+    for cuantos in (1, 2):
+        carpeta = tmp_path / f"a{cuantos}"
+        carpeta.mkdir()
+        assert auto_builder(carpeta, *relays[:cuantos]).anonymous is False
+    carpeta = tmp_path / "a3"
+    carpeta.mkdir()
+    assert auto_builder(carpeta, *relays).anonymous is True
+
+
+def test_automatic_counts_operators_not_machines(tmp_path):
+    """Tres relevos del mismo proveedor son un salto, no tres: si no, «auto»
+    sería una forma de creerse anónimo detrás de una sola empresa."""
+    mismo = [candidate(f"62.171.160.{10 + i}", first_seen=time.time() - 60) for i in range(3)]
+    paths = auto_builder(tmp_path, *mismo)
+    assert paths.hops == 1
+    assert paths.anonymous is False
+
+
+def test_an_empty_network_is_still_not_ready(tmp_path):
+    """«Auto» baja el listón, no lo quita: sin un solo relevo no hay ruta."""
+    assert auto_builder(tmp_path).ready is False
+
+
+def test_a_fixed_count_is_not_affected(tmp_path):
+    """Quien pidió tres saltos sigue teniendo tres o ninguno."""
+    uno = [candidate("62.171.160.130", first_seen=time.time() - 60)]
+    fijo = PathBuilder(directory_of(*uno), GuardSet(tmp_path / "g.json"), min_age=0)
+    assert fijo.auto is False
+    assert fijo.hops == 3
+    assert fijo.ready is False
+
+
+def test_the_automatic_warning_says_it_will_fix_itself():
+    """Y el fijo no lo dice, porque no es verdad: no se arregla solo."""
+    from nullcell.onion.path_select import anonymity_warning
+
+    assert "se activará sola" in anonymity_warning(1, auto=True).lower()
+    assert "se activará sola" not in anonymity_warning(1).lower()
+    assert anonymity_warning(3, auto=True) == ""

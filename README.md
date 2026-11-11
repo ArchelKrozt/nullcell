@@ -227,8 +227,27 @@ que en una red nueva no funciona nada hasta que haya gente, y no hay gente hasta
 Exigirlo siempre significa que una red nueva no puede existir.
 
 ```bash
-ncell desktop --hops 1    # un salto: funciona con un solo relevo
+ncell desktop --hops auto   # los que la red permita; la privacidad se enciende sola
+ncell desktop --hops 1      # fijo en uno, aunque la red crezca
 ```
+
+**`auto` es la respuesta al huevo y la gallina.** Exigir tres operadores siempre significa que una
+red nueva no puede existir; fijar un número bajo deja una red madura corriendo sin anonimato
+porque nadie volvió a cambiarlo. En automático, los saltos **suben con la red**:
+
+| operadores distintos | saltos | |
+|---|---|---|
+| 1 | 1 | como un navegador normal dentro de la red |
+| 2 | 2 | sigue sin haber anonimato |
+| **3 o más** | **3** | **anonimato activo, sin tocar nada** |
+
+Se recalcula cada vez que se construye un circuito, así que una celda encendida desde hace horas
+empieza a usar tres saltos **en cuanto aparece el tercer operador**, sin reiniciar. Cuenta
+operadores distintos y no máquinas: tres relevos del mismo proveedor son un salto, o «auto» sería
+una forma de creerse anónimo detrás de una sola empresa.
+
+El aviso en magenta desaparece solo cuando llega a tres. Y `auto` nunca es el valor por defecto:
+renunciar al anonimato es una decisión que se toma, no un estado al que se llega sin querer.
 
 **El precio está escrito y no se puede no ver:** con un salto, ese único relevo ve tu IP y a qué
 portal vas, las dos cosas a la vez. Con dos, el primero sabe quién eres y el segundo adónde vas, y

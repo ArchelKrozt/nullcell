@@ -41,7 +41,7 @@ class NodeThread:
         seeds: list[str] | None = None,
         lan: bool = False,
         config: str | None = None,
-        hops: int = 3,
+        hops: int | str = 3,
         min_age: float | None = None,
     ) -> None:
         self.port = port

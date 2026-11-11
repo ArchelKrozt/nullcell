@@ -277,11 +277,36 @@ async def _runtime(identity, cfg, *, endpoints=None, seeds=None, listen=None, an
     return runtime
 
 
-def _warn_if_not_anonymous(hops: int, min_age: float = 10.0) -> None:
+def _parse_hops(value: str | int) -> int | str:
+    """Un número de saltos, o `"auto"`. Nada más.
+
+    Se valida aquí para que un `--hops tres` falle al arrancar con una frase
+    útil, en lugar de caer en algún `int()` a mitad de la construcción de un
+    circuito.
+    """
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return "auto"
+    try:
+        hops = int(value)
+    except (TypeError, ValueError):
+        raise typer.BadParameter(f"--hops acepta 1-5 o 'auto', no {value!r}") from None
+    if not 1 <= hops <= 5:
+        raise typer.BadParameter(f"--hops acepta 1-5 o 'auto', no {hops}")
+    return hops
+
+
+def _warn_if_not_anonymous(hops: int | str, min_age: float = 10.0) -> None:
     """Decirlo al arrancar, en rojo, antes de que empiece nada."""
     from nullcell.onion.path_select import MIN_OBSERVED_AGE, anonymity_warning
 
-    if warning := anonymity_warning(hops):
+    if hops == "auto":
+        typer.secho(
+            "\n·  Saltos automáticos: se usarán los que la red permita. Mientras haya "
+            "menos de 3 operadores NO hay anonimato, y se activa solo al llegar.\n",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+    elif warning := anonymity_warning(int(hops)):
         typer.secho(f"\n⚠  {warning}\n", fg=typer.colors.RED, bold=True, err=True)
     if min_age * 60.0 < MIN_OBSERVED_AGE:
         typer.secho(
@@ -918,15 +943,13 @@ def cmd_desktop(
         ),
     ] = None,
     hops: Annotated[
-        int,
+        str,
         typer.Option(
             "--hops",
-            min=1,
-            max=5,
-            help="saltos por circuito. 3 es lo que da el anonimato; menos sirve "
-            "para probar una red que aún no tiene 3 operadores",
+            help="saltos por circuito: 1-5, o 'auto' para usar los que la red "
+            "permita y encender la privacidad sola al llegar a 3",
         ),
-    ] = 3,
+    ] = "3",
     min_age: Annotated[
         float,
         typer.Option(
@@ -948,7 +971,7 @@ def cmd_desktop(
     from nullcell.cli.logging_setup import setup as setup_logging
 
     setup_logging(log_level)
-    _warn_if_not_anonymous(hops, min_age)
+    _warn_if_not_anonymous(_parse_hops(hops), min_age)
     try:
         from nullcell.desktop.app import run
     except ImportError:
@@ -966,7 +989,7 @@ def cmd_desktop(
             hud_port=hud_port,
             lan=lan,
             config=config_dir,
-            hops=hops,
+            hops=_parse_hops(hops),
             min_age=min_age * 60.0,
         )
     )

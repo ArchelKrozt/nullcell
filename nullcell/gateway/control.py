@@ -700,7 +700,11 @@ class ControlPanel:
             "reach_detail": reach_mod.describe(self.reach),
             "paths_ready": bool(self.runtime.paths.ready),
             "anonymous": bool(self.runtime.paths.anonymous),
-            "anonymity_warning": anonymity_warning(self.runtime.paths.hops),
+            "anonymity_warning": anonymity_warning(
+                self.runtime.paths.hops, auto=getattr(self.runtime.paths, "auto", False)
+            ),
+            "hops": self.runtime.paths.hops,
+            "auto_hops": getattr(self.runtime.paths, "auto", False),
             "why_not_ready": missing["why"],
             "network": missing,
             "portal": self.portal,
