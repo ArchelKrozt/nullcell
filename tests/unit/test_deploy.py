@@ -388,13 +388,14 @@ def test_peers_are_saved_as_soon_as_there_are_any(tmp_path):
 
     from nullcell.desktop import node_thread
 
-    body = inspect.getsource(node_thread.NodeThread._serve)
-    bootstrap = body.index("bootstrap(")
-    saved = body.index("_save_peers()")
-    assert saved > bootstrap, "hay que guardar después de conocer a alguien"
-    assert saved < body.index("await self._stop.wait()"), (
-        "guardar sólo al salir pierde todo si el proceso muere de otra forma"
+    body = inspect.getsource(node_thread.NodeThread._join_network)
+    assert body.index("_save_peers()") > body.index("bootstrap("), (
+        "hay que guardar después de conocer a alguien"
     )
+    # Y entrar a la red es una tarea aparte, no parte del arranque. Que vaya
+    # *después* de levantar la interfaz lo comprueba test_entrypoint; aquí
+    # basta con que exista como tarea.
+    assert "_join_network" in inspect.getsource(node_thread.NodeThread._serve)
 
 
 def test_saving_peers_without_a_node_is_quiet_and_harmless(tmp_path):

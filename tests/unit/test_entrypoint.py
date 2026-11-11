@@ -17,6 +17,8 @@ import textwrap
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "nullcell-escritorio.py"
+COMMAND = ROOT / "Nullcell.command"
 
 
 def code_of(obj) -> str:
@@ -25,14 +27,16 @@ def code_of(obj) -> str:
     Un test que busca `node.stop()` en el fuente lo encuentra en la frase que
     explica por qué ya no se llama, y convierte la explicación en un fallo. Ha
     pasado dos veces, así que mejor una función que acordarse.
+
+    `ast.unparse` basta: no conserva comentarios y devuelve código con sus
+    espacios. Pasarlo además por `tokenize` juntando las piezas los borraba, y
+    entonces «except Exception» dejaba de encontrarse por motivos de formato
+    —otro test que fallaba por cómo mira, no por lo que mira.
     """
     import ast
     import inspect
-    import io
-    import tokenize
 
-    source = inspect.getsource(obj)
-    tree = ast.parse(textwrap.dedent(source))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
             body = node.body
@@ -43,16 +47,7 @@ def code_of(obj) -> str:
                 and isinstance(body[0].value.value, str)
             ):
                 node.body = body[1:] or [ast.Pass()]
-    cleaned = ast.unparse(tree)
-    # `ast.unparse` ya descarta los comentarios; esto sólo normaliza.
-    return "".join(
-        token.string if token.type != tokenize.COMMENT else ""
-        for token in tokenize.generate_tokens(io.StringIO(cleaned).readline)
-    )
-
-
-SCRIPT = ROOT / "nullcell-escritorio.py"
-COMMAND = ROOT / "Nullcell.command"
+    return ast.unparse(tree)
 
 
 def test_both_entry_points_exist():
