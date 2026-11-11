@@ -476,15 +476,20 @@ def test_a_vanished_guard_does_not_block_every_circuit(tmp_path):
 
     from nullcell.core import ids
 
-    fantasma = ids.encode_nid(b"\xee" * 32)
+    # El caso atascado de verdad: los GUARD_COUNT sitios ocupados por celdas
+    # que ya no están. Con uno solo libre, `ensure` todavía puede añadir otro
+    # y el bloqueo no llega a ocurrir.
+    ahora = time.time()
+    fantasmas = {ids.encode_nid(bytes([200 + i]) * 32): ahora for i in range(GUARD_COUNT)}
     archivo = tmp_path / "g.json"
-    archivo.write_text(json.dumps({fantasma: time.time()}))
+    archivo.write_text(json.dumps(fantasmas))
 
     vivo = candidate("62.171.160.130", first_seen=OLD)
     paths = PathBuilder(directory_of(vivo), GuardSet(archivo), hops="auto", min_age=0)
 
-    assert len(paths.build()) == 1
-    assert fantasma not in {ids.encode_nid(p) for p in GuardSet(archivo).pubs}
+    assert len(paths.build()) == 1, "un guard ausente bloqueaba todos los circuitos"
+    quedan = {ids.encode_nid(p) for p in GuardSet(archivo).pubs}
+    assert not (quedan & set(fantasmas)), "los ausentes siguen fijados"
 
 
 def test_a_live_guard_is_kept_even_if_another_is_down(tmp_path):
