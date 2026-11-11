@@ -165,17 +165,6 @@ class NodeThread:
         from nullcell.discovery.bootstrap import load_bootstrap, load_peers
 
         self.peers_path = cfg.path_peers
-        known = list(load_bootstrap()) + list(load_peers(self.peers_path))
-        if known or self.seeds:
-            found = await runtime.node.bootstrap(known + list(self.seeds))
-            log.info("bootstrap: %d celdas conocidas", found)
-            await runtime.learn_relays()
-            # Guardado **aquí**, no sólo al salir ni cada dos minutos: una app
-            # de escritorio no siempre muere por donde uno espera —un SIGTERM
-            # se lleva el hilo del nodo sin pasar por el cierre ordenado— y
-            # medido así, lo aprendido se perdía entero.
-            self._save_peers()
-
         bus = EventBus()
         runtime.open_index()
         await runtime.refresh_portals()
@@ -210,6 +199,12 @@ class NodeThread:
         # la persona a volver a pulsar el botón cuando aparezcan relevos es
         # pedirle que vigile lo que el programa puede vigilar.
         await panel.restore()
+        # **Después** de levantar la interfaz, no antes. Entrar a la red puede
+        # tardar: una semilla muerta se reintenta durante segundos, y con el
+        # bootstrap por delante la ventana no aparecía hasta terminarlo. Para
+        # quien mira, eso es un programa colgado que además «ha perdido» sus
+        # semillas, porque todavía no ha leído ninguna.
+        runtime.spawn(self._join_network(load_bootstrap, load_peers))
         runtime.spawn(panel.run_forever())
         runtime.spawn(pex.run_periodically(runtime.node))
         runtime.spawn(runtime.keep_learning())
@@ -233,6 +228,22 @@ class NodeThread:
             await ui.close()
         with contextlib.suppress(Exception):
             await runtime.close()
+
+    async def _join_network(self, load_bootstrap, load_peers) -> None:
+        """Entrar a la red, en segundo plano."""
+        known = list(load_bootstrap()) + list(load_peers(self.peers_path))
+        if not (known or self.seeds):
+            return
+        try:
+            found = await self.runtime.node.bootstrap(known + list(self.seeds))
+            log.info("bootstrap: %d celdas conocidas", found)
+            await self.runtime.learn_relays()
+        except Exception as exc:  # noqa: BLE001 - la interfaz ya está viva
+            log.warning("no se pudo entrar a la red: %s", exc)
+            return
+        # Guardado aquí, no sólo al salir ni cada minuto: una app de escritorio
+        # no siempre muere por donde uno espera.
+        self._save_peers()
 
     def _save_peers(self, path: Path | None = None) -> None:
         """Write down who answered, so the next start needs no seed."""

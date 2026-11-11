@@ -221,3 +221,29 @@ def test_the_browser_releases_its_page_before_the_profile():
     assert "def shutdown(self)" in source
     assert "setPage(None)" in source
     assert "deleteLater()" in source
+
+
+# ------------------- M10: la interfaz primero, la red después
+def test_the_interface_starts_before_joining_the_network():
+    """Entrar a la red puede tardar: una semilla muerta se reintenta durante
+    segundos. Con el bootstrap por delante, la ventana no aparecía hasta
+    terminarlo — y para quien mira, eso es un programa colgado que además «ha
+    perdido» sus semillas, porque todavía no ha leído ninguna.
+
+    Medido: con una semilla que no responde, el panel tardaba más de 14 s en
+    existir. Ahora está listo en ~4.
+    """
+    from nullcell.desktop.node_thread import NodeThread
+
+    source = code_of(NodeThread._serve)
+    assert source.index("ui.start()") < source.index("_join_network")
+
+
+def test_joining_the_network_never_takes_the_node_down():
+    """La interfaz ya está viva cuando esto corre, así que un fallo aquí se
+    registra y se sigue, en lugar de matar el arranque."""
+    from nullcell.desktop.node_thread import NodeThread
+
+    source = code_of(NodeThread._join_network)
+    assert "except Exception" in source
+    assert "_save_peers" in source
