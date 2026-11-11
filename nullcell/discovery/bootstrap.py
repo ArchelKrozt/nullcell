@@ -82,12 +82,34 @@ def load_peers(path: Path) -> list[Node]:
 
 
 def save_peers(path: Path, nodes: list[Node]) -> None:
-    """Remember reachable peers for the next start."""
-    entries = [
-        {"nid": node.nid, "endpoints": list(node.endpoints)}
-        for node in nodes[:MAX_SAVED_PEERS]
+    """Remember peers for the next start, **añadiendo** a lo que ya había.
+
+    Sobrescribir era una pérdida silenciosa. La tabla de rutas expulsa a quien
+    falla tres veces seguidas —correcto en un DHT, porque una tabla llena de
+    nodos muertos no encuentra nada— pero guardar *sólo lo que hay en la
+    tabla* convertía un apagón de un minuto en un olvido permanente: la celda
+    por la que entraste a la red desaparecía del disco porque justo entonces
+    no contestaba, y al reiniciar ya no conocías a nadie.
+
+    Esto no resucita a los muertos. Una entrada vieja se reintenta y, si sigue
+    sin responder, se vuelve a expulsar de la tabla; lo único que cambia es
+    que la dirección sobrevive para poder reintentarla.
+    """
+    fresh = {
+        node.nid: {"nid": node.nid, "endpoints": list(node.endpoints)}
+        for node in nodes
         if node.endpoints
-    ]
+    }
+    # Lo de ahora primero: si una celda cambió de dirección, manda la nueva.
+    merged = dict(fresh)
+    for old_node in load_peers(path):
+        if old_node.nid not in merged and old_node.endpoints:
+            merged[old_node.nid] = {
+                "nid": old_node.nid,
+                "endpoints": list(old_node.endpoints),
+            }
+
+    entries = list(merged.values())[:MAX_SAVED_PEERS]
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(entries, indent=1), encoding="utf-8")

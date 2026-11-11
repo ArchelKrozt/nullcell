@@ -530,3 +530,73 @@ def test_announce_is_optional_now():
 
     signature = inspect.signature(main.cmd_relay)
     assert signature.parameters["announce"].default is None
+
+
+# ------------------- M10: no olvidar una celda porque hoy no contesta
+def test_saving_peers_adds_instead_of_replacing(tmp_path):
+    """La tabla de rutas expulsa a quien falla tres veces —correcto en un DHT,
+    porque una tabla de nodos muertos no encuentra nada— pero guardar *sólo lo
+    que hay en la tabla* convertía un apagón de un minuto en un olvido
+    permanente: la celda por la que entraste desaparecía del disco."""
+    from nullcell.core.identity import Identity
+    from nullcell.dht.routing_table import Node
+    from nullcell.discovery.bootstrap import load_peers, save_peers
+
+    archivo = tmp_path / "peers.db"
+    vps = Node(pub=Identity.generate().public_key, endpoints=["62.171.160.130:4433"])
+    otra = Node(pub=Identity.generate().public_key, endpoints=["190.95.43.9:4433"])
+
+    save_peers(archivo, [vps])
+    save_peers(archivo, [otra])  # el VPS no contesta ahora mismo
+
+    recordados = {n.nid for n in load_peers(archivo)}
+    assert vps.nid in recordados, "se perdió la celda por la que entraste"
+    assert otra.nid in recordados
+
+
+def test_saving_nothing_does_not_wipe_what_was_known(tmp_path):
+    """Un arranque que no llega a conocer a nadie no debe borrar la red."""
+    from nullcell.core.identity import Identity
+    from nullcell.dht.routing_table import Node
+    from nullcell.discovery.bootstrap import load_peers, save_peers
+
+    archivo = tmp_path / "peers.db"
+    save_peers(archivo, [Node(pub=Identity.generate().public_key, endpoints=["1.2.3.4:4433"])])
+    save_peers(archivo, [])
+    assert len(load_peers(archivo)) == 1
+
+
+def test_a_new_address_for_the_same_cell_wins(tmp_path):
+    """Si una celda se mudó, manda lo de ahora, no lo de ayer."""
+    from nullcell.core.identity import Identity
+    from nullcell.dht.routing_table import Node
+    from nullcell.discovery.bootstrap import load_peers, save_peers
+
+    archivo = tmp_path / "peers.db"
+    key = Identity.generate().public_key
+    save_peers(archivo, [Node(pub=key, endpoints=["1.1.1.1:4433"])])
+    save_peers(archivo, [Node(pub=key, endpoints=["2.2.2.2:4433"])])
+
+    guardados = load_peers(archivo)
+    assert len(guardados) == 1
+    assert guardados[0].endpoints == ["2.2.2.2:4433"]
+
+
+def test_the_list_stays_bounded(tmp_path):
+    """Añadir no puede significar crecer sin límite."""
+    from nullcell.core.identity import Identity
+    from nullcell.dht.routing_table import Node
+    from nullcell.discovery.bootstrap import MAX_SAVED_PEERS, load_peers, save_peers
+
+    archivo = tmp_path / "peers.db"
+    for i in range(MAX_SAVED_PEERS + 40):
+        save_peers(
+            archivo,
+            [
+                Node(
+                    pub=Identity.generate().public_key,
+                    endpoints=[f"10.0.{i // 256}.{i % 256}:4433"],
+                )
+            ],
+        )
+    assert len(load_peers(archivo)) <= MAX_SAVED_PEERS
