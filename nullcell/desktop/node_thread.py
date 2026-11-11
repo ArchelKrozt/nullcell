@@ -263,6 +263,9 @@ class NodeThread:
         while True:
             await asyncio.sleep(interval)
             self._save_peers()
+            # Igual que los pares: un SIGTERM no pasa por el cierre ordenado.
+            with contextlib.suppress(Exception):
+                self.runtime.remember_observations()
 
     # ----------------------------------------------------------- despliegue
     def _deployment(self):

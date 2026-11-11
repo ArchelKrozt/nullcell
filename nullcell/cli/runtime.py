@@ -86,6 +86,10 @@ class Runtime:
         relay = RelayService(identity.x25519_private)
         rendezvous.install(relay, identity, dht=node)
         directory = RelayDirectory()
+        # Lo observado en sesiones anteriores: el reloj de §7 no debe volver a
+        # cero cada vez que alguien cierra el programa.
+        if recalled := directory.recall(home / "observed.json"):
+            log.info("recordados %d relevos vistos antes", recalled)
         guards = GuardSet(home / "guards.json")
         return cls(
             identity=identity,
@@ -370,7 +374,13 @@ class Runtime:
         }
 
     # --------------------------------------------------------------- teardown
+    def remember_observations(self) -> int:
+        """Anotar lo que esta celda ha visto, para el próximo arranque."""
+        return self.directory.remember(self.home / "observed.json")
+
     async def close(self) -> None:
+        self.remember_observations()
+
         for task in self._tasks:
             task.cancel()
         self._tasks.clear()

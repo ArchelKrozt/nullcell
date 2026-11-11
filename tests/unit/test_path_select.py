@@ -302,3 +302,63 @@ def test_the_warning_names_what_is_actually_lost():
 def test_the_hop_count_cannot_be_zero(tmp_path):
     """Cero saltos no es un circuito, es una conexión directa con otro nombre."""
     assert PathBuilder(RelayDirectory(), GuardSet(tmp_path / "g.json"), hops=0).hops == 1
+
+
+# ------------------ M10: el reloj de §7 no vuelve a cero en cada arranque
+def test_what_we_observed_survives_a_restart(tmp_path):
+    """Sin esto, abrir el programa, esperar, cerrarlo y volver a abrirlo
+    empezaba los diez minutos otra vez: quien reinicia a menudo nunca llegaba
+    a tener una ruta. §7 quería encarecer inundar la red de relevos nuevos, no
+    castigar a quien apaga el ordenador."""
+    archivo = tmp_path / "observed.json"
+    antes = directory_of(candidate("62.171.160.130", first_seen=time.time() - 540))
+    assert antes.remember(archivo) == 1
+
+    despues = RelayDirectory()
+    assert despues.recall(archivo) == 1
+
+    # Al volver a ingerirlo, el reloj sigue donde estaba.
+    nuevo = candidate("62.171.160.130")
+    nuevo.pub = next(iter(antes._relays))  # noqa: SLF001 - el mismo relevo
+    if (before := despues._remembered.get(nuevo.pub)) is not None:  # noqa: SLF001
+        nuevo.first_seen = before
+    assert 530 < nuevo.observed_for() < 560
+
+
+def test_a_remembered_time_cannot_be_in_the_future(tmp_path):
+    """Un `first_seen` posterior a ahora haría que un relevo pareciera más
+    antiguo de lo posible, que es exactamente lo que el suelo impide."""
+    import json
+
+    archivo = tmp_path / "observed.json"
+    direccion = candidate("62.171.160.130")
+    from nullcell.core import ids
+
+    archivo.write_text(json.dumps({ids.encode_nid(direccion.pub): time.time() + 86_400}))
+
+    directory = RelayDirectory()
+    directory.recall(archivo)
+    recordado = directory._remembered[direccion.pub]  # noqa: SLF001
+    assert recordado <= time.time() + 1
+
+
+def test_a_corrupt_file_starts_clean_instead_of_failing(tmp_path):
+    archivo = tmp_path / "observed.json"
+    archivo.write_text("{esto no es json")
+    assert RelayDirectory().recall(archivo) == 0
+
+
+def test_a_missing_file_is_not_an_error(tmp_path):
+    assert RelayDirectory().recall(tmp_path / "no-existe.json") == 0
+
+
+def test_only_our_own_observation_is_written_not_the_descriptor(tmp_path):
+    """Lo que el relevo afirma se vuelve a pedir a la red en cada arranque;
+    escribirlo sería restaurar una foto de la red que fue cierta una vez."""
+    import json
+
+    archivo = tmp_path / "observed.json"
+    directory_of(candidate("62.171.160.130", first_seen=OLD)).remember(archivo)
+    guardado = json.loads(archivo.read_text())
+    assert all(isinstance(v, (int, float)) for v in guardado.values())
+    assert "62.171.160.130" not in archivo.read_text(), "el endpoint no se guarda"

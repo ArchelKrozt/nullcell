@@ -409,6 +409,8 @@ class RelayDirectory:
 
     def __init__(self) -> None:
         self._relays: dict[bytes, RelayCandidate] = {}
+        #: Cuándo vimos a cada relevo en sesiones anteriores.
+        self._remembered: dict[bytes, float] = {}
 
     def __len__(self) -> int:
         return len(self._relays)
@@ -420,6 +422,10 @@ class RelayDirectory:
             return None
         known = self._relays.get(fresh.pub)
         if known is None:
+            # Si ya lo habíamos visto en otra sesión, el reloj sigue donde
+            # estaba: es nuestra observación, sólo que recordada.
+            if (before := self._remembered.get(fresh.pub)) is not None:
+                fresh.first_seen = before
             self._relays[fresh.pub] = fresh
             return fresh
         # Refresh what it says, keep when we first saw it.
@@ -431,6 +437,60 @@ class RelayDirectory:
 
     def candidates(self, *, now: float | None = None) -> list[RelayCandidate]:
         return list(self._relays.values())
+
+    # ------------------------------------------------- memoria de lo observado
+    def remember(self, path: Path) -> int:
+        """Guardar **cuándo vimos a cada relevo por primera vez**.
+
+        Sin esto el reloj de §7 volvía a cero en cada arranque: abrías el
+        programa, esperabas, lo cerrabas, y al volver a abrirlo faltaban otra
+        vez diez minutos. Quien reinicia a menudo nunca llega a tener una ruta,
+        que no es la protección que §7 quería dar — quería encarecer inundar la
+        red de relevos nuevos, no castigar a quien apaga su ordenador.
+
+        Se guarda **sólo la observación propia**, no el descriptor: lo que el
+        relevo afirma se vuelve a pedir a la red en cada arranque, y escribirlo
+        sería restaurar una foto de la red que fue cierta una vez.
+        """
+        seen = {ids.encode_nid(pub): relay.first_seen for pub, relay in self._relays.items()}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(seen, indent=2), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as exc:
+            log.warning("no se pudo guardar %s: %s", path, exc)
+            return 0
+        return len(seen)
+
+    def recall(self, path: Path, *, now: float | None = None) -> int:
+        """Recuperar esas observaciones. Nunca fatal, y nunca hacia el futuro.
+
+        Un `first_seen` posterior a ahora haría que un relevo pareciera más
+        antiguo de lo posible, que es justo lo que el suelo de §7 impide. Se
+        recorta, en lugar de confiar en el reloj de un fichero.
+        """
+        now = time.time() if now is None else now
+        try:
+            seen = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return 0
+        except (OSError, ValueError) as exc:
+            log.warning("%s ilegible, se empieza en limpio: %s", path, exc)
+            return 0
+        if not isinstance(seen, dict):
+            return 0
+
+        self._remembered = {}
+        for nid, when in seen.items():
+            if not isinstance(when, (int, float)):
+                continue
+            try:
+                pub = ids.decode_nid(str(nid)).pub
+            except Exception:  # noqa: BLE001 - una entrada rota no invalida el resto
+                continue
+            self._remembered[pub] = min(float(when), now)
+        return len(self._remembered)
 
     def get(self, pub: bytes) -> RelayCandidate | None:
         """The candidate for *pub*, if this node has its descriptor.
