@@ -23,12 +23,9 @@ keystream and digest material the onion layers need (:mod:`nullcell.onion.layers
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 
-from cryptography.hazmat.primitives.asymmetric.x25519 import (
-    X25519PrivateKey,
-    X25519PublicKey,
-)
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
@@ -78,12 +75,31 @@ class HandshakeKeys:
             raise HandshakeError("directional keys must be 32 bytes")
 
 
-def x25519_public_bytes(private: X25519PrivateKey) -> bytes:
-    return private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+#: An X25519 private key from either of the two libraries already in the tree.
+#: :mod:`nullcell.core.identity` derives the node's key with PyNaCl, because §3
+#: keeps the key file down to one seed and one dependency; this module speaks
+#: `noiseprotocol`, which wants the raw scalar and is handed it through
+#: ``cryptography``. The two classes share a name and nothing else, so a relay
+#: built from a real identity used to fail every CREATE while the tests, which
+#: generate a ``cryptography`` key directly, stayed green. The conversion lives
+#: here, in the one place the raw bytes are actually needed.
+X25519PrivateKeyLike = Any
 
 
-def _private_bytes(private: X25519PrivateKey) -> bytes:
-    return private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+def x25519_public_bytes(private: X25519PrivateKeyLike) -> bytes:
+    public = private.public_key
+    # ``cryptography`` exposes a method; PyNaCl, an already-built PublicKey.
+    if callable(public):
+        return public().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    return bytes(public)
+
+
+def _private_bytes(private: X25519PrivateKeyLike) -> bytes:
+    serialize = getattr(private, "private_bytes", None)
+    if serialize is None:
+        # PyNaCl keeps the 32-byte scalar and ``bytes()`` returns it verbatim.
+        return bytes(private)
+    return serialize(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
 
 
 def _split_keys(connection: NoiseConnection) -> tuple[bytes, bytes]:
@@ -161,7 +177,7 @@ class Responder:
 
     __slots__ = ("_conn", "keys")
 
-    def __init__(self, static_private: X25519PrivateKey) -> None:
+    def __init__(self, static_private: X25519PrivateKeyLike) -> None:
         self.keys: HandshakeKeys | None = None
         self._conn = NoiseConnection.from_name(NOISE_PATTERN)
         self._conn.set_as_responder()
