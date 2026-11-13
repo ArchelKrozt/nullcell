@@ -38,6 +38,11 @@ DEFAULT_BATCH: Final[int] = 64
 FrameHandler = Callable[[int, int, memoryview], Awaitable[None] | None]
 
 
+#: Cada cuánto se envía un PING de QUIC por un enlace que lleva circuitos.
+#: Muy por debajo del ``idle_timeout`` de 60 s de ambos extremos.
+KEEPALIVE_EVERY: float = 20.0
+
+
 class FrameProtocol(QuicConnectionProtocol):
     """Carries Nullcell frames over one QUIC connection.
 
@@ -62,6 +67,8 @@ class FrameProtocol(QuicConnectionProtocol):
         self._versions_sent = False
         self.frames_in = 0
         self.frames_out = 0
+        self.keepalives = 0
+        self._keepalive: asyncio.Task | None = None
 
     @property
     def is_client(self) -> bool:
@@ -84,6 +91,8 @@ class FrameProtocol(QuicConnectionProtocol):
         if isinstance(event, HandshakeCompleted):
             if not self.handshake_done.done():
                 self.handshake_done.set_result(None)
+            if self._keepalive is None:
+                self._keepalive = asyncio.get_running_loop().create_task(self._keep_alive())
         elif isinstance(event, StreamDataReceived):
             if self._stream_id is None:
                 self._stream_id = event.stream_id
@@ -92,6 +101,30 @@ class FrameProtocol(QuicConnectionProtocol):
             for fut in (self.handshake_done, self.closed):
                 if not fut.done():
                     fut.set_result(None)
+            if self._keepalive is not None:
+                self._keepalive.cancel()
+
+    async def _keep_alive(self) -> None:
+        """Mantener vivo un enlace **mientras lleve circuitos**.
+
+        QUIC cierra una conexión tras 60 s sin tráfico (``idle_timeout``). Un
+        circuito de punto de enlace pasa la mayor parte del tiempo callado
+        —sólo habla cuando llega una visita—, así que al minuto de publicar el
+        portal su enlace moría en silencio: el portal seguía «en línea» en el
+        DHT y nadie podía entrar. Un enlace sin circuitos se deja caer, como
+        antes: no hay nada que mantener.
+        """
+        try:
+            while not self.closed.done():
+                await asyncio.sleep(KEEPALIVE_EVERY)
+                if self.closed.done():
+                    return
+                if self.circuits:
+                    self.keepalives += 1
+                    self._quic.send_ping(self.keepalives)
+                    self.transmit()
+        except asyncio.CancelledError:
+            return
 
     @property
     def peer_certificate(self):

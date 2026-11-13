@@ -149,3 +149,22 @@ async def test_large_payloads_are_not_merged_or_split():
             await asyncio.wait_for(done.wait(), timeout=10.0)
 
         assert sizes == [496] * 10
+
+
+async def test_a_link_carrying_circuits_is_kept_alive(monkeypatch):
+    """Un punto de enlace calla hasta que llega una visita: sin PINGs, QUIC
+    cerraba su enlace al minuto (idle_timeout) y el portal, aún «en línea» en
+    el DHT, dejaba de ser alcanzable sin que nadie lo notara."""
+    from nullcell.net import link as link_mod
+
+    monkeypatch.setattr(link_mod, "KEEPALIVE_EVERY", 0.05)
+    async with (
+        running_cell() as (server, port, _),
+        open_link(server.nid, "127.0.0.1", port) as link,
+    ):
+        await asyncio.sleep(0.2)
+        assert link.keepalives == 0  # sin circuitos no hay nada que mantener
+        link.route(7, lambda *a: None)
+        await asyncio.sleep(0.3)
+        assert link.keepalives >= 2
+        assert not link.closed.done()
