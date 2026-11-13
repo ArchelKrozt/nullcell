@@ -125,7 +125,7 @@ class Resolver:
         if private:
             return await self._private_descriptor(pub)
 
-        found = await self.dht.find_value(ids.routing_key(pub))
+        found = await self.dht.find_value(ids.routing_key(pub), want=RecordType.SERVICE)
         for record in sorted(found, key=lambda r: r.ts, reverse=True):
             if record.type is not RecordType.SERVICE:
                 continue

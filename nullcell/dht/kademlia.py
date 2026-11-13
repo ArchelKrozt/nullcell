@@ -24,7 +24,7 @@ from nullcell.core.frames import RelayCmd
 from nullcell.core.identity import Identity
 from nullcell.dht import protocol as proto
 from nullcell.dht import records as rec
-from nullcell.dht.records import Record, RecordError
+from nullcell.dht.records import Record, RecordError, RecordType
 from nullcell.dht.routing_table import K, Node, RoutingTable, distance
 from nullcell.dht.store import Store, StoreFull
 from nullcell.dht.transport import Transport, TransportError
@@ -318,15 +318,23 @@ class KademliaNode:
         nodes, _ = await self._lookup(target, want_value=False)
         return nodes
 
-    async def find_value(self, key: bytes) -> list[Record]:
-        """Fetch records under *key*, verifying every one before returning it."""
+    async def find_value(self, key: bytes, *, want: RecordType | None = None) -> list[Record]:
+        """Fetch records under *key*, verifying every one before returning it.
+
+        ``want`` says which type the caller is after. Bajo `routing_key(pub)`
+        conviven el descriptor de relevo y el de portal de una misma celda, así
+        que «tengo algo en caché» no significa «tengo lo que buscas»: sin esto,
+        quien ya había aprendido el relevo nunca encontraba el portal.
+        """
         local = self.store.get(key)
+        if want is not None:
+            local = [r for r in local if r.type is want]
         if local:
             return local
 
         _, blobs = await self._lookup(key, want_value=True)
         found: list[Record] = []
-        seen: set[bytes] = set()
+        seen: set[tuple] = set()
         for blob in blobs:
             try:
                 record = Record.decode(blob)
@@ -334,9 +342,11 @@ class KademliaNode:
             except RecordError:
                 self.stats["rejected"] += 1
                 continue  # a lying peer costs us one verification, nothing more
-            if record.key != key or record.pub in seen:
+            # Por publicador y tipo: relevo y portal de una misma celda viven
+            # bajo la misma clave y son dos registros distintos, no un duplicado.
+            if record.key != key or (record.pub, record.type) in seen:
                 continue
-            seen.add(record.pub)
+            seen.add((record.pub, record.type))
             found.append(record)
             with contextlib.suppress(StoreFull):
                 self.store.put(record, blob=blob, pow_bits=pow_bits)  # cache it (§7)
@@ -361,9 +371,12 @@ class KademliaNode:
         Pings the seeds, then looks up our own id, which is what populates the
         buckets near us, and then random ids to fill the far ones.
         """
+        # La semilla incluida puede ser esta misma celda (el VPS del proyecto
+        # arranca con su propia línea en `bootstrap.json`): ni se añade ni se
+        # le hace ping, que sería salir a la IP pública para hablar consigo.
+        seeds = [seed for seed in seeds if seed.pub != self.identity.public_key]
         for seed in seeds:
-            if seed.pub != self.identity.public_key:
-                self.table.add(seed)
+            self.table.add(seed)
 
         alive = await asyncio.gather(*(self.ping(seed) for seed in seeds))
         if not any(alive):

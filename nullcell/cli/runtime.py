@@ -164,6 +164,31 @@ class Runtime:
 
         self.listener = Listener(self.identity, host, port, on_link=on_link)
         await self.listener.start()
+        # Para que la celda pueda ser el primer salto de sus propios circuitos
+        # (red de un solo relevo): se alcanza a sí misma por el loopback.
+        local = "127.0.0.1" if host in ("0.0.0.0", "::", "") or ":" not in host else host
+        self.circuits.self_pub = self.identity.public_key
+        self.circuits.self_endpoint = f"{local}:{port}" if ":" not in local else f"[{local}]:{port}"
+
+    def self_hop(self):
+        """Esta celda como salto, con sus direcciones públicas.
+
+        Para el portal de una red pequeña: si no hay otro relevo que funcione,
+        él mismo es su punto de enlace. Las direcciones son las anunciadas
+        (las que verán los clientes); el circuito propio va por el loopback.
+        """
+        from nullcell.onion.circuit import Hop
+
+        if self.listener is None:
+            return None
+        endpoints = [e for e in getattr(self.node, "endpoints", []) if e]
+        if not endpoints:
+            return None
+        return Hop(
+            pub=self.identity.public_key,
+            x25519=self.identity.x25519_public,
+            endpoints=list(endpoints),
+        )
 
     # -------------------------------------------------------------- directory
     async def learn_relays(self, peers: list[Node] | None = None) -> int:
@@ -176,7 +201,7 @@ class Runtime:
         learned = 0
         for peer in candidates:
             try:
-                found = await self.node.find_value(ids.routing_key(peer.pub))
+                found = await self.node.find_value(ids.routing_key(peer.pub), want=RecordType.RELAY)
             except Exception as exc:
                 log.debug("could not fetch a descriptor for %s: %s", peer.short, exc)
                 continue

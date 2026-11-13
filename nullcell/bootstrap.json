@@ -1,0 +1,11 @@
+{
+  "comment": "Semillas incluidas: con una sola ya se entra en la red. Son sólo presentaciones (§7): no firman nada ni avalan nada, y todo lo aprendido a través de ellas se verifica aparte. Mientras la red tenga menos de tres operadores no hay anonimato, y el panel lo dice; se activa solo al llegar el tercero.",
+  "version": 1,
+  "peers": [
+    {
+      "nid": "wuxq7zn2rr4cmze5nm34ujg2n3ehhqq5234obcdaglqjuugtuckih7ib",
+      "endpoints": ["62.171.160.130:4433"],
+      "note": "nullcell.null — VPS del proyecto"
+    }
+  ]
+}

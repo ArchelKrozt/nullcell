@@ -57,8 +57,24 @@ def _parse_entries(entries: Any, source: str) -> list[Node]:
 
 
 def load_bootstrap(path: Path | None = None) -> list[Node]:
-    """Read the seed list shipped with the build."""
-    path = Path(__file__).resolve().parents[2] / BOOTSTRAP_FILE if path is None else path
+    """Read the seed list shipped with the build.
+
+    Vive **dentro del paquete** (`nullcell/bootstrap.json`). Antes estaba en la
+    raíz del repositorio y se buscaba dos carpetas por encima de este fichero:
+    eso funciona en un checkout, pero `pip install .` no copia la raíz, así que
+    en una instalación de verdad la lista llegaba vacía y una celda nueva no
+    tenía a quién presentarse.
+    """
+    if path is None:
+        here = Path(__file__).resolve()
+        path = next(
+            (
+                p
+                for p in (here.parents[1] / BOOTSTRAP_FILE, here.parents[2] / BOOTSTRAP_FILE)
+                if p.exists()
+            ),
+            here.parents[1] / BOOTSTRAP_FILE,
+        )
     if not path.exists():
         return []
     try:

@@ -131,7 +131,13 @@ class Store:
                 raise StoreFull(f"key quota reached ({self.max_keys})")
             entries = self._by_key[record.key] = {}
 
-        previous = entries.get(record.pub)
+        # Una entrada por publicador **y tipo**: el descriptor de relevo y el de
+        # portal de una misma celda comparten clave (`routing_key(pub)`), y con
+        # una sola entrada por publicador el portal pisaba al relevo. La celda
+        # que es ambas cosas —el servidor de una red pequeña— dejaba de existir
+        # como relevo para todo el que llegaba después de publicar su portal.
+        slot = (record.pub, record.type)
+        previous = entries.get(slot)
         delta = len(blob) - (len(previous.blob) if previous else 0)
         if previous is None and self._bytes + delta > self.max_bytes:
             raise StoreFull(f"byte quota reached ({self.max_bytes})")
@@ -144,11 +150,11 @@ class Store:
             if record.ts < previous.record.ts:
                 return False
             new_entry.stored_at = previous.stored_at  # keep the age it earned
-            entries[record.pub] = new_entry
+            entries[slot] = new_entry
             self._bytes += delta
             return True
 
-        if record.type not in _MULTI_VALUE and entries:
+        if record.type not in _MULTI_VALUE and any(pub != record.pub for pub, _ in entries):
             # Single-value key with a different publisher: only possible for a
             # name, where first come wins until it expires (§8).
             return False
@@ -160,7 +166,7 @@ class Store:
             del entries[weakest_pub]
             self._bytes -= len(weakest.blob)
 
-        entries[record.pub] = new_entry
+        entries[slot] = new_entry
         self._bytes += len(blob)
         return True
 

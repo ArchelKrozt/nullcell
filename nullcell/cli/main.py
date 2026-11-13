@@ -369,10 +369,10 @@ def cmd_node(
         str,
         typer.Option(
             "--hops",
-            help="saltos por circuito: 1-5, o 'auto'. Quien publica sólo puede "
-            "usar N-1 relevos, porque su propia celda no cuenta",
+            help="saltos por circuito: 1-5, o 'auto' (por defecto). En automático, "
+            "si no hay otro relevo, el portal es su propio punto de enlace",
         ),
-    ] = "3",
+    ] = "auto",
     min_age: Annotated[
         float,
         typer.Option("--min-age", min=0, max=120, help="minutos observando un relevo"),
@@ -701,6 +701,18 @@ def cmd_browse(
         ),
     ] = "127.0.0.1",
     launch: Annotated[bool, typer.Option("--launch/--no-launch")] = True,
+    hops: Annotated[
+        str,
+        typer.Option(
+            "--hops",
+            help="saltos por circuito: 1-5, o 'auto' (por defecto): con una sola "
+            "semilla ya se entra, y el anonimato se enciende solo con 3 operadores",
+        ),
+    ] = "auto",
+    min_age: Annotated[
+        float,
+        typer.Option("--min-age", min=0, max=120, help="minutos observando un relevo"),
+    ] = 10.0,
 ) -> None:
     """Levanta el proxy y abre un navegador con perfil aislado (§8)."""
     identity, cfg = _load_identity()
@@ -743,7 +755,16 @@ def cmd_browse(
     typer.echo(f"  {profile.install_ca(ca.cert_path)}")
 
     async def run() -> None:
-        runtime = await _runtime(identity, cfg, seeds=_seeds(seed), anonymous=True)
+        saltos = _parse_hops(hops)
+        _warn_if_not_anonymous(saltos, min_age)
+        runtime = await _runtime(
+            identity,
+            cfg,
+            seeds=_seeds(seed),
+            anonymous=True,
+            hops=saltos,
+            min_age=min_age * 60.0,
+        )
         try:
             _require_paths(runtime)
 

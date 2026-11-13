@@ -447,7 +447,27 @@ mensaje y decir que lo escribió otro.
 Eso no es una pieza que falte, es la decisión central del diseño: un descubrimiento global sería
 una lista de arranque que alguien mantiene, es decir, una autoridad — exactamente lo que Nullcell
 no quiere tener. Tor lo resuelve con autoridades de directorio incrustadas; aquí
-[`bootstrap.json`](bootstrap.json) está **vacío a propósito** mientras no exista una red pública.
+[`nullcell/bootstrap.json`](nullcell/bootstrap.json) trae **una sola semilla**, la del servidor del
+proyecto (`nullcell.null`). Es una presentación, no una autoridad: no firma nada, todo lo aprendido
+por ella se verifica aparte, y cualquiera puede añadir las suyas.
+
+#### Red pequeña: con una semilla basta
+
+Por defecto todo arranca con `--hops auto`, y eso permite que una red de **un solo servidor**
+funcione:
+
+| operadores distintos | saltos | anonimato | espera de 10 min |
+|---|---|---|---|
+| 1 (sólo la semilla) | 1 — el circuito va directo | no | no |
+| 2 | 2 | no | no |
+| 3 o más, ya observados 10 min | 3 | **sí, solo** | sí |
+
+- Si el servidor que aloja un portal **no tiene ningún otro relevo** que lleve circuitos, el portal
+  es **su propio punto de enlace**. La conexión sigue cifrada de extremo a extremo (QUIC entre
+  celdas, Noise NK entre navegador y portal, TLS contra la CA local); lo que no hay es anonimato.
+- En cuanto aparecen relevos ajenos, el portal pasa solo a la ruta normal (como mucho cada 10 min).
+- El panel lo dice siempre con un candado: **🔒 anónimo** o **⚠ sin anonimato**.
+- `--hops 3` sigue existiendo para quien no quiera conectar nunca sin anonimato.
 
 #### Invitaciones: una sola cosa que copiar
 
@@ -540,11 +560,12 @@ ncell browse panaderia.null                                          # abrir el 
 ncell resolve panaderia.null                                         # ver sus puntos de enlace
 ```
 
-`ncell host` y `ncell browse` eligen sus rutas con la selección de §7. Un nodo recién instalado
-**tiene que esperar 10 minutos** antes de poder construir un circuito: es el suelo de antigüedad
-observada, y el mensaje de error lo dice en lugar de fallar en seco.
+`ncell host` y `ncell browse` eligen sus rutas con la selección de §7. Con `--hops 3`, un nodo
+recién instalado **tiene que esperar 10 minutos** antes de poder construir un circuito: es el suelo
+de antigüedad observada. En automático (por defecto) ese suelo sólo se aplica cuando ya hay
+anonimato que proteger.
 
-`--seed` es necesario mientras `bootstrap.json` esté vacío: no hay red pública todavía.
+`--seed` es opcional: la semilla del proyecto viene incluida. Añade otras para no depender de una.
 
 Dos celdas en la misma máquina:
 

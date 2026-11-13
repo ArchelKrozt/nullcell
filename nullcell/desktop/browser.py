@@ -249,6 +249,13 @@ class BrowserWindow(QWidget):
         panel = getattr(self.node, "panel", None)
         if kind == "portal" and panel is not None and panel.local_url_for(url.host()):
             kind, label = "local", "tu portal · local"
+        elif kind == "portal":
+            # El candado: cifrado siempre; anónimo sólo con tres operadores.
+            paths = getattr(getattr(self.node, "runtime", None), "paths", None)
+            if paths is not None and getattr(paths, "anonymous", False):
+                label = "🔒 portal · anónimo"
+            else:
+                kind, label = "directo", "⚠ portal · cifrado, sin anonimato"
         self.kind.setText(label)
         self.kind.setProperty("kind", kind)
         self.kind.style().unpolish(self.kind)

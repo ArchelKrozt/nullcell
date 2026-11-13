@@ -51,6 +51,7 @@ include = ["nullcell*"]
 # mirar dentro, no una prueba.
 [tool.setuptools.package-data]
 nullcell = [
+    "bootstrap.json",
     "hud/*.html",
     "hud/*.css",
     "hud/*.js",

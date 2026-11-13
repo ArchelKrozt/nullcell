@@ -607,8 +607,10 @@ class PathBuilder:
         #: privacidad **se enciende sola** en cuanto hay con qué, y mientras
         #: tanto se dice claramente que no la hay.
         #:
-        #: Nunca es el valor por defecto: renunciar al anonimato es una
-        #: decisión que se toma, no un estado al que se llega sin querer.
+        #: Es el valor por defecto desde la «red pequeña»: una celda nueva
+        #: entra con la sola semilla incluida, y el anonimato se enciende solo
+        #: al haber tres operadores. Mientras no lo hay, se dice en cada sitio
+        #: (aviso y candado en el panel), no se finge.
         self.auto = isinstance(hops, str) and hops.strip().lower() == "auto"
         self._hops = CIRCUIT_LENGTH if self.auto else max(1, int(hops))
         #: Cuánto hay que haber observado un relevo antes de enrutar por él.
@@ -633,14 +635,38 @@ class PathBuilder:
         # Operadores distintos, no máquinas: §7 cuenta prefijos, y tres
         # relevos del mismo proveedor son un salto, no tres.
         operators = len({p for c in usable for p in c.prefixes})
+        if self.min_age < self.base_min_age:
+            # Hay operadores para tres saltos, pero no todos llevan el tiempo
+            # observado que el suelo exige: anonimato sin su protección contra
+            # inundaciones de identidades sería fingirlo. Dos, hasta que lo
+            # cumplan; entonces sube a tres con el suelo completo.
+            return max(1, min(CIRCUIT_LENGTH - 1, operators))
         return max(1, min(CIRCUIT_LENGTH, operators))
 
     @property
-    def min_age(self) -> float:
-        """El suelo en uso. Se resuelve al leerlo, no al construir, para que
-        sustituir la constante —como hacen varios tests— siga surtiendo
+    def base_min_age(self) -> float:
+        """El suelo configurado. Se resuelve al leerlo, no al construir, para
+        que sustituir la constante —como hacen varios tests— siga surtiendo
         efecto: un valor por defecto se fija en el momento del `def`."""
         return MIN_OBSERVED_AGE if self._min_age is None else self._min_age
+
+    @property
+    def min_age(self) -> float:
+        """El suelo en uso.
+
+        En automático, el suelo sólo se aplica cuando hay anonimato que
+        proteger: con menos de tres operadores ya observados el tiempo
+        suficiente, los circuitos son cortos y no ocultan nada, y obligar a
+        esperar diez minutos sólo impide entrar. En cuanto hay tres operadores
+        con antigüedad, vuelve el suelo completo junto con los tres saltos.
+        """
+        base = self.base_min_age
+        if not self.auto or base <= 0:
+            return base
+        aged = self.directory.usable(min_pow_bits=self.min_pow_bits, min_age=base)
+        if len({p for c in aged for p in c.prefixes}) >= CIRCUIT_LENGTH:
+            return base
+        return 0.0
 
     def build(self, *, length: int | None = None, ending_at: Hop | None = None) -> list[Hop]:
         """A path of *length* hops, optionally ending at a given relay.
@@ -650,6 +676,13 @@ class PathBuilder:
         and diversity rules.
         """
         length = self.hops if length is None else length
+        if ending_at is not None and length <= 1:
+            # Un solo salto: el circuito va directo al punto fijado. Es lo que
+            # permite entrar en una red de un solo relevo —que puede ser el
+            # mismo que aloja el portal—; sin esto, `select_path(length=0)`
+            # devolvía igualmente un guard y la ruta salía de dos saltos en el
+            # mismo prefijo, que §7 rechaza: nadie podía entrar.
+            return [ending_at]
         if ending_at is None:
             return select_path(
                 self.directory.candidates(),

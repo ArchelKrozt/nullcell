@@ -1,5 +1,0 @@
-{
-  "comment": "Semillas de entrada a la red. Son solo presentaciones: no firman nada, no avalan nada, y todo registro aprendido a traves de ellas se verifica por separado (§7). Vacio mientras no exista una red publica.",
-  "version": 1,
-  "peers": []
-}

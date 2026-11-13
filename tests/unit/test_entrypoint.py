@@ -263,14 +263,22 @@ def test_the_desktop_adapts_to_the_network_by_default():
     assert firma.parameters["hops"].default == "auto"
 
 
-def test_a_server_node_still_asks_for_three():
-    """Un servidor se configura a mano y se deja corriendo meses: ahí el valor
-    por defecto debe ser el estricto, y relajarlo una decisión escrita."""
+def test_every_entry_point_defaults_to_automatic_hops():
+    """Red pequeña: navegador, nodo y `browse` arrancan en automático.
+
+    Antes `ncell node` exigía tres saltos por defecto, con la idea de que un
+    servidor que se deja corriendo meses debía ser estricto. En la práctica
+    eso impedía justo lo que una red nueva necesita: un único servidor que
+    aloja el portal y al que se entra con su sola semilla. En automático el
+    anonimato se enciende solo al haber tres operadores —también en un
+    servidor que lleva meses encendido—, y mientras no lo hay se dice.
+    """
     import inspect
 
     from nullcell.cli import main
 
-    assert inspect.signature(main.cmd_node).parameters["hops"].default == "3"
+    for comando in (main.cmd_node, main.cmd_desktop, main.cmd_browse):
+        assert inspect.signature(comando).parameters["hops"].default == "auto", comando.__name__
 
 
 def test_the_warning_is_still_loud_while_it_lasts(capsys):

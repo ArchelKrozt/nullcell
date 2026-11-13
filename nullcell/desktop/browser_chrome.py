@@ -37,6 +37,7 @@ QLabel#kind {
 }
 QLabel#kind[kind="portal"] { color: #34d399; border-color: #34d399; }
 QLabel#kind[kind="local"]  { color: #22d3ee; border-color: #22d3ee; }
+QLabel#kind[kind="directo"] { color: #f59e0b; border-color: #f59e0b; }
 QLabel#status { color: #7d8da3; font-size: 10px; padding: 3px 10px; }
 """
 

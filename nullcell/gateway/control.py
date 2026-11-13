@@ -55,6 +55,9 @@ MUTATING: Final[frozenset[str]] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 #: How often the node tries to make the declared intents true.
 RECONCILE_EVERY: Final[float] = 20.0
+#: Cada cuánto un portal servido por la vía directa (red pequeña) intenta
+#: pasar a la normal si han aparecido relevos ajenos.
+DIRECT_RETRY: Final[float] = 600.0
 
 Action = Any
 
@@ -450,9 +453,12 @@ class ControlPanel:
             with contextlib.suppress(Exception):
                 await self._chat_service()
 
-        if self.portal is None or self.portal["state"] == "en línea":
+        if self.portal is None:
             return
-        if not self.runtime.paths.ready:
+        if self.portal["state"] == "en línea":
+            await self._maybe_leave_direct()
+            return
+        if not self.runtime.paths.ready and not self._can_serve_alone():
             return
         try:
             await self._go_live()
@@ -477,8 +483,29 @@ class ControlPanel:
         # handler off the service would serve only whoever connected first.
         service.on_session = lambda session: setattr(session, "on_stream", site.serve)
 
-        paths = [self.runtime.paths.build() for _ in range(INTRO_POINTS)]
-        established = await service.establish(paths)
+        established = 0
+        if self.runtime.paths.ready:
+            try:
+                paths = [self.runtime.paths.build() for _ in range(INTRO_POINTS)]
+            except Exception as exc:  # noqa: BLE001 - PathError y compañía
+                log.info("sin rutas por otros relevos: %s", exc)
+                paths = []
+            if paths:
+                # En automático, un intento por punto: si los relevos ajenos no
+                # aceptan circuitos, quedan aún la vía directa y otro intento
+                # en la próxima pasada, sin bloquear minutos.
+                established = await service.establish(
+                    paths, attempts=1 if self.runtime.paths.auto else 3
+                )
+        direct = False
+        if not established and self._can_serve_alone():
+            # Red pequeña: ningún relevo ajeno lleva circuitos, así que la
+            # propia celda —que es relevo y alcanzable— es su punto de enlace.
+            # Sigue cifrado de extremo a extremo (QUIC + Noise NK); lo que no
+            # hay es anonimato, y `describe()` lo dice.
+            me = self.runtime.self_hop()
+            established = await service.establish([[me]], attempts=2)
+            direct = bool(established)
         if not established:
             await site.close()
             raise ControlError("ningún punto de enlace se estableció todavía")
@@ -496,11 +523,50 @@ class ControlPanel:
                 descriptor=descriptor, name=self.portal.get("name")
             )
         )
-        self.portal.update({"state": "en línea", "intro_points": established, "stored_on": stored})
+        self.portal.update(
+            {
+                "state": "en línea",
+                "intro_points": established,
+                "stored_on": stored,
+                "direct": direct,
+                "online_since": time.time(),
+            }
+        )
         if self.portal.get("name"):
             taken = await self.runtime.publisher.publish_name(self.portal["name"])
             self.portal["name_registered"] = bool(taken)
         log.info("portal en línea: %s", self.portal["address"])
+
+    # ------------------------------------------------------- red pequeña
+    def _can_serve_alone(self) -> bool:
+        """¿Puede el portal ser su propio punto de enlace?
+
+        Sólo en modo automático —quien fija los saltos a mano pidió otra
+        cosa—, y sólo si esta celda escucha como relevo con una dirección que
+        otros puedan alcanzar: un punto de enlace al que nadie llega no sirve.
+        """
+        if not getattr(self.runtime.paths, "auto", False):
+            return False
+        hop = getattr(self.runtime, "self_hop", lambda: None)()
+        if hop is None:
+            return False
+        return any(reach_mod.classify(e) in ("internet", "lan") for e in hop.endpoints)
+
+    async def _maybe_leave_direct(self) -> None:
+        """Pasar de la vía directa a la normal en cuanto haya relevos ajenos.
+
+        Como mucho una vez cada 10 minutos, para no tirar el portal en bucle si
+        los relevos que aparecen no aceptan circuitos de verdad.
+        """
+        if not self.portal or not self.portal.get("direct"):
+            return
+        if not self.runtime.paths.ready:
+            return
+        if time.time() - self.portal.get("online_since", 0) < DIRECT_RETRY:
+            return
+        folder, name = self.portal["folder"], self.portal.get("name")
+        log.info("hay relevos ajenos: el portal deja la vía directa")
+        await self.publish_folder(folder, name=name, save=False)
 
     async def run_forever(self) -> None:
         while True:
@@ -747,7 +813,11 @@ class ControlPanel:
             "reach": self.reach,
             "reach_detail": reach_mod.describe(self.reach),
             "paths_ready": bool(self.runtime.paths.ready),
-            "anonymous": bool(self.runtime.paths.anonymous),
+            # Anónimo de verdad: tres saltos **y** el portal no se sirve a sí
+            # mismo. El candado del panel sale de aquí, no de `hops`.
+            "anonymous": bool(self.runtime.paths.anonymous)
+            and not bool((self.portal or {}).get("direct")),
+            "direct": bool((self.portal or {}).get("direct")),
             "anonymity_warning": anonymity_warning(
                 self.runtime.paths.hops, auto=getattr(self.runtime.paths, "auto", False)
             ),

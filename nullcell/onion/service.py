@@ -85,6 +85,12 @@ class CircuitManager:
         self.links = links if links is not None else LinkManager()
         self.circuits: list[Circuit] = []
         self._stack = contextlib.AsyncExitStack()
+        #: La propia celda, cuando escucha como relevo. Un circuito cuyo primer
+        #: salto es ella misma —el portal de una red de un solo relevo usándose
+        #: como punto de enlace— va por el loopback: salir a la IP pública
+        #: para volver a entrar falla detrás de NAT y dentro de contenedores.
+        self.self_pub: bytes | None = None
+        self.self_endpoint: str | None = None
 
     async def build(self, hops: list[Hop]) -> Circuit:
         """Build a circuit through *hops*, guard first."""
@@ -95,7 +101,10 @@ class CircuitManager:
             raise CircuitError(f"{guard.short} has no known endpoint")
         from nullcell.net.link_manager import parse_endpoint
 
-        host, port = parse_endpoint(guard.endpoints[0])
+        endpoint = guard.endpoints[0]
+        if self.self_endpoint and guard.pub == self.self_pub:
+            endpoint = self.self_endpoint
+        host, port = parse_endpoint(endpoint)
         link = await self._stack.enter_async_context(open_link(guard.nid, host, port))
         circuit = await Circuit(link).build(hops)
         self.circuits.append(circuit)

@@ -121,6 +121,16 @@ async function refresh() {
     $("dot").className = `dot ${control.paths_ready ? "up" : "wait"}`;
     $("stats").textContent = `${s.peers ?? 0} celdas · ${s.relays ?? 0} relevos usables`;
 
+    // El candado de la cabecera: anónimo o no, sin tener que leer nada más.
+    const anon = $("anon");
+    anon.hidden = !control.paths_ready && !control.direct;
+    anon.className = `anon ${control.anonymous ? "si" : "no"}`;
+    anon.textContent = control.anonymous ? "🔒 anónimo" : "⚠ sin anonimato";
+    anon.title = control.anonymous
+      ? "Circuitos de 3 saltos por operadores distintos: nadie en el camino sabe a la vez quién eres y adónde vas."
+      : (control.anonymity_warning ||
+         "Conexión cifrada, pero sin anonimato: la red aún no tiene 3 operadores. Se activa solo al llegar.");
+
     // Arriba del todo y en magenta: si esto está puesto, se ve siempre.
     const danger = $("danger");
     danger.hidden = !control.anonymity_warning;
