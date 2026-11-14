@@ -66,6 +66,11 @@ class KademliaNode:
         #: A :class:`~nullcell.search.gossip.GossipService`, if this cell keeps
         #: observations. Optional: a cell that only routes need not.
         self.gossip = None
+        #: El :class:`~nullcell.discovery.seeds.SeedBook` de esta celda, si
+        #: reparte semillas. ``on_seeds`` se llama con las recibidas nuevas,
+        #: para que quien pueda las verifique (un relevo, que ya es público).
+        self.seeds = None
+        self.on_seeds = None
         self.stats = {"rpc_in": 0, "rpc_out": 0, "stored": 0, "rejected": 0}
 
     # ------------------------------------------------------------------ serving
@@ -114,6 +119,8 @@ class KademliaNode:
                 reply = self._on_store(message)
             elif op == proto.Op.GOSSIP:
                 reply = self._on_gossip(message)
+            elif op == proto.Op.SEEDS:
+                reply = self._on_seeds(message)
             else:
                 reply = {"err": f"unknown op: {op!r}"}
         except proto.ProtocolError as exc:
@@ -194,6 +201,51 @@ class KademliaNode:
         if stored:
             self.stats["stored"] += 1
         return {"ok": 1, **self._me(), "stored": bool(stored)}
+
+    def _on_seeds(self, message: dict[str, Any]) -> dict[str, Any]:
+        """Recibir las semillas que ofrece otra celda y devolver las que le faltan.
+
+        Lo ofrecido entra **sin verificar** y no se reparte hasta que contesta
+        (`SeedBook.merge`). Lo que se devuelve es sólo lo que esta celda ha
+        visto contestar: nunca se reenvía de oídas.
+        """
+        from nullcell.discovery.seeds import MAX_OFFER, MAX_REPLY
+
+        self._learn(message)
+        if self.seeds is None:
+            return {"err": "this cell does not share seeds"}
+        offer = message.get("offer")
+        offer = (
+            [x for x in offer[:MAX_OFFER] if isinstance(x, str)] if isinstance(offer, list) else []
+        )
+        nuevas = self.seeds.merge(offer)
+        if nuevas:
+            self.seeds.save()
+            if self.on_seeds is not None:
+                with contextlib.suppress(Exception):
+                    self.on_seeds(nuevas)
+        reply = self.seeds.shareable(MAX_REPLY, exclude=set(offer))
+        self.seeds.stats["compartidas"] += len(reply)
+        return {"ok": 1, **self._me(), "seeds": reply}
+
+    async def exchange_seeds(self, node: Node) -> int:
+        """Un intercambio de semillas con *node*. Devuelve cuántas nuevas."""
+        from nullcell.discovery.seeds import MAX_OFFER
+
+        if self.seeds is None:
+            return 0
+        reply = await self._rpc(
+            node, {"op": proto.Op.SEEDS, "offer": self.seeds.shareable(MAX_OFFER)}
+        )
+        if not reply or "seeds" not in reply:
+            return 0
+        nuevas = self.seeds.merge(reply.get("seeds"))
+        if nuevas:
+            self.seeds.save()
+            if self.on_seeds is not None:
+                with contextlib.suppress(Exception):
+                    self.on_seeds(nuevas)
+        return len(nuevas)
 
     def _on_gossip(self, message: dict[str, Any]) -> dict[str, Any]:
         """Exchange observations with a peer (§8, §9).

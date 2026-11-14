@@ -34,6 +34,9 @@ class Op(StrEnum):
     #: observations and send back only the deltas, so a new cell inherits what
     #: the network knows instead of recrawling it.
     GOSSIP = "gossip"
+    #: Intercambio de semillas: ofrezco las que he visto contestar y me
+    #: devuelves las que me faltan (ver `nullcell.discovery.seeds`).
+    SEEDS = "seeds"
 
 
 class ProtocolError(Exception):

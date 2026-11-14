@@ -236,15 +236,20 @@ class NodeThread:
     async def _join_network(self, load_bootstrap, load_peers) -> None:
         """Entrar a la red, en segundo plano."""
         known = list(load_bootstrap()) + list(load_peers(self.peers_path))
-        if not (known or self.seeds):
+        entrada = self.runtime.seed_nodes(known + list(self.seeds))
+        if not entrada:
             return
         try:
-            found = await self.runtime.node.bootstrap(known + list(self.seeds))
+            found = await self.runtime.node.bootstrap(entrada)
             log.info("bootstrap: %d celdas conocidas", found)
             await self.runtime.learn_relays()
+            # Antes de ir por circuitos: la única vez que se puede comprobar
+            # cualquier semilla, no sólo las que son relevos conocidos.
+            await self.runtime.verify_seeds()
         except Exception as exc:  # noqa: BLE001 - la interfaz ya está viva
             log.warning("no se pudo entrar a la red: %s", exc)
             return
+        self.runtime.start_seed_exchange()
         # Guardado aquí, no sólo al salir ni cada minuto: una app de escritorio
         # no siempre muere por donde uno espera.
         self._save_peers()

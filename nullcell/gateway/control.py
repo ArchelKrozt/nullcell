@@ -289,7 +289,7 @@ class ControlPanel:
         return max((reach_mod.classify(e) for e in endpoints), key=lambda r: order[r])
 
     # --------------------------------------------------------------- semilla
-    async def add_seed(self, line: str) -> dict[str, Any]:
+    async def add_seed(self, line: str, note: str = "") -> dict[str, Any]:
         """Join through somebody else's cell (§7: a seed is an introduction).
 
         Takes an invitation or a bare seed line, because asking somebody to
@@ -311,6 +311,14 @@ class ControlPanel:
         nodes = [node for raw in invitation.seeds if (node := _parse_seed(raw)) is not None]
         if not nodes:
             raise ControlError("ninguna de esas semillas se pudo interpretar")
+        # Al gestor, como «tuyas»: se recuerdan, se comprueban y, cuando
+        # contestan, se comparten con la red.
+        book = getattr(self.runtime, "seeds", None)
+        if book is not None:
+            for raw in invitation.seeds:
+                with contextlib.suppress(ValueError):
+                    book.add(raw, source="tuya", note=note)
+            book.save()
 
         try:
             known = await self.runtime.node.bootstrap(nodes)
@@ -335,6 +343,44 @@ class ControlPanel:
                     + " de la invitación: ¿están encendidas y con su puerto UDP abierto?"
                 )
             ),
+        }
+
+    # ------------------------------------------------------ gestor de semillas
+    def seeds_state(self) -> dict[str, Any]:
+        """Las semillas de esta celda, con su estado, para el gestor."""
+        book = getattr(self.runtime, "seeds", None)
+        if book is None:
+            return {"seeds": [], "stats": {}, "own": self.seed_line()}
+        lista = book.describe()
+        return {
+            "seeds": lista,
+            "stats": dict(book.stats),
+            "total": len(lista),
+            "verified": sum(1 for s in lista if s["verified"]),
+            "own": self.seed_line(),
+            "invitation": self.invitation(),
+        }
+
+    def remove_seed(self, line: str) -> dict[str, Any]:
+        book = getattr(self.runtime, "seeds", None)
+        if book is None or not book.remove(line):
+            raise ControlError("esa semilla no está en el gestor")
+        book.save()
+        return {"detail": "semilla quitada", **self.seeds_state()}
+
+    async def exchange_seeds_now(self) -> dict[str, Any]:
+        """Intercambiar y comprobar ahora, sin esperar a la próxima ronda."""
+        from nullcell.discovery import seeds as seeds_mod
+
+        book = getattr(self.runtime, "seeds", None)
+        if book is None:
+            raise ControlError("esta celda no tiene gestor de semillas")
+        nuevas = await seeds_mod.exchange_once(self.runtime.node, book)
+        vivas = await seeds_mod.verify(self.runtime.node, book, relays=self.runtime.directory)
+        return {
+            "detail": f"{nuevas} nuevas de la red · {vivas} comprobadas ahora",
+            "new": nuevas,
+            **self.seeds_state(),
         }
 
     def seed_line(self) -> str | None:

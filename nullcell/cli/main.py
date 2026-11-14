@@ -277,11 +277,16 @@ async def _runtime(
     if listen is not None:
         await runtime.listen(*listen)
 
-    if seeds:
-        known = await runtime.node.bootstrap(seeds)
+    # Las del gestor de semillas (incluidas, tuyas y compartidas) además de
+    # las que se pasen; y las comprobamos ahora, que todavía es en directo.
+    entrada = runtime.seed_nodes(seeds)
+    if entrada:
+        known = await runtime.node.bootstrap(entrada)
         typer.echo(f"  bootstrap: {known} celdas")
         learned = await runtime.learn_relays()
         typer.echo(f"  relevos observados: {learned}")
+        vivas = await runtime.verify_seeds()
+        typer.echo(f"  semillas que contestan: {vivas} de {len(runtime.seeds or [])}")
 
     if anonymous:
         _require_paths(runtime)
@@ -479,6 +484,7 @@ def cmd_node(
 
         runtime.spawn(pex.run_periodically(runtime.node))
         runtime.spawn(runtime.keep_learning())
+        runtime.start_seed_exchange()
         try:
             while True:
                 await asyncio.sleep(30)
@@ -819,6 +825,7 @@ def cmd_browse(
                 typer.echo(f"→ sin navegador. URL: {url}")
 
             runtime.spawn(runtime.keep_learning())
+            runtime.start_seed_exchange()
             typer.echo("\n  Ctrl-C para parar")
             while True:
                 await asyncio.sleep(30)

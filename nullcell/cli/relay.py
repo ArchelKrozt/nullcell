@@ -112,10 +112,17 @@ class RelayRunner:
         known = load_bootstrap() + load_peers(runtime.resolver.hosts_file.with_name("peers.db"))
         known += [_parse_seed(spec) for spec in self.seeds]
         known = [node for node in known if node is not None]
+        for spec in self.seeds:  # las que pasó el operador quedan como suyas
+            if runtime.seeds is not None:
+                with contextlib.suppress(ValueError):
+                    runtime.seeds.add(spec, source="tuya")
+        known = runtime.seed_nodes(known)
         if known:
             count = await runtime.node.bootstrap(known)
             log.info("joined the network: %d cells known", count)
             await runtime.learn_relays()
+            vivas = await runtime.verify_seeds()
+            log.info("seeds answering: %d of %d", vivas, len(runtime.seeds or []))
         else:
             log.warning(
                 "no seeds: this relay is alone. That is correct for the first "
@@ -134,6 +141,8 @@ class RelayRunner:
         runtime.spawn(runtime.publisher.renew_forever(endpoints=endpoints))
         runtime.spawn(pex.run_periodically(runtime.node))
         runtime.spawn(runtime.keep_learning())
+        # Un relevo es justo quien reparte semillas a los que llegan.
+        runtime.start_seed_exchange()
 
         if self.lan:
             from nullcell.discovery.mdns import Beacon

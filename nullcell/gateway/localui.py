@@ -369,11 +369,33 @@ class LocalUI:
         line = body.get("seed")
         if not isinstance(line, str) or not line.strip():
             return web.json_response({"error": "falta 'seed'"}, status=400)
+        note = body.get("note") if isinstance(body.get("note"), str) else ""
         try:
-            result = await panel.add_seed(line)
+            result = await panel.add_seed(line, note=note[:80])
         except control_mod.ControlError as refused:
             return web.json_response({"error": str(refused)}, status=409)
         self.bus.emit("control.seed", result.get("detail", "semilla añadida"))
+        return web.json_response(result)
+
+    async def _seeds_state(self, request: web.Request) -> web.StreamResponse:
+        return web.json_response(self._panel().seeds_state())
+
+    async def _seeds_remove(self, request: web.Request) -> web.StreamResponse:
+        body = await _json_body(request)
+        line = body.get("seed")
+        if not isinstance(line, str) or not line.strip():
+            return web.json_response({"error": "falta 'seed'"}, status=400)
+        try:
+            return web.json_response(self._panel().remove_seed(line))
+        except control_mod.ControlError as refused:
+            return web.json_response({"error": str(refused)}, status=404)
+
+    async def _seeds_exchange(self, request: web.Request) -> web.StreamResponse:
+        try:
+            result = await self._panel().exchange_seeds_now()
+        except control_mod.ControlError as refused:
+            return web.json_response({"error": str(refused)}, status=409)
+        self.bus.emit("control.seed", result.get("detail", "semillas intercambiadas"))
         return web.json_response(result)
 
     async def _unpublish(self, request: web.Request) -> web.StreamResponse:
@@ -442,6 +464,10 @@ class LocalUI:
                 web.post("/api/control/portal", self._publish_folder),
                 web.delete("/api/control/portal", self._unpublish),
                 web.post("/api/control/seed", self._add_seed),
+                web.get("/api/seeds", self._seeds_state),
+                web.post("/api/seeds", self._add_seed),
+                web.delete("/api/seeds", self._seeds_remove),
+                web.post("/api/seeds/exchange", self._seeds_exchange),
                 web.get("/api/chat", self._chat_state),
                 web.post("/api/chat/join", self._chat_join),
                 web.post("/api/chat/say", self._chat_say),

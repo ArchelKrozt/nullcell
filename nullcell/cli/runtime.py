@@ -63,6 +63,9 @@ class Runtime:
     publisher: Publisher
     resolver: Resolver
     listener: Listener | None = None
+    #: El gestor de semillas (`nullcell.discovery.seeds`): las que trae el
+    #: programa, las del dueño y las que comparte la red.
+    seeds: object | None = None
     indexer: object | None = None
     search: object | None = None
     gossip: object | None = None
@@ -92,7 +95,14 @@ class Runtime:
         if recalled := directory.recall(home / "observed.json"):
             log.info("recordados %d relevos vistos antes", recalled)
         guards = GuardSet(home / "guards.json")
+        from nullcell.discovery.bootstrap import load_bootstrap
+        from nullcell.discovery.seeds import SEEDS_FILE, SeedBook
+
+        seeds = SeedBook(home / SEEDS_FILE, own_nid=identity.nid).load()
+        seeds.seed_from_bootstrap(load_bootstrap())
+        node.seeds = seeds
         return cls(
+            seeds=seeds,
             identity=identity,
             home=home,
             node=node,
@@ -332,6 +342,52 @@ class Runtime:
                 raise
             except Exception as exc:
                 log.debug("portal refresh failed: %s", exc)
+
+    def seed_nodes(self, extra: list[Node] | None = None) -> list[Node]:
+        """Por dónde entrar: las semillas del gestor más las que se pasen."""
+        out: list[Node] = []
+        vistos: set[bytes] = set()
+        for n in [*(extra or []), *(self.seeds.nodes() if self.seeds else [])]:
+            if n.pub not in vistos and n.pub != self.identity.public_key:
+                vistos.add(n.pub)
+                out.append(n)
+        return out
+
+    async def verify_seeds(self) -> int:
+        """Comprobar las semillas pendientes (antes de ir por circuitos, todas)."""
+        if self.seeds is None:
+            return 0
+        from nullcell.discovery import seeds as seeds_mod
+
+        return await seeds_mod.verify(self.node, self.seeds, relays=self.directory)
+
+    def start_seed_exchange(self) -> None:
+        """Intercambiar semillas con la red, de fondo.
+
+        Si esta celda es un relevo (escucha), verifica enseguida lo que le
+        ofrecen: ya es pública, así que contactar a una semilla no revela nada
+        que no se sepa. Un navegador lo verifica al entrar, con el resto.
+        """
+        if self.seeds is None:
+            return
+        from nullcell.discovery import seeds as seeds_mod
+
+        if self.listener is not None:
+
+            def verificar(nuevas) -> None:
+                async def _v() -> None:
+                    for seed in nuevas:
+                        try:
+                            ok = await asyncio.wait_for(self.node.ping(seed.node), 12)
+                        except Exception:  # noqa: BLE001
+                            ok = False
+                        self.seeds.mark(seed.line, ok)
+                    self.seeds.save()
+
+                self.spawn(_v())
+
+            self.node.on_seeds = verificar
+        self.spawn(seeds_mod.run_forever(self.node, self.seeds, relays=self.directory))
 
     def spawn(self, coroutine) -> asyncio.Task:
         task = asyncio.create_task(coroutine)
