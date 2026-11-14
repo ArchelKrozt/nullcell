@@ -1,0 +1,9 @@
+.cadena/
+ruedas/
+salida/
+build/
+.gradle/
+app/build/
+local.properties
+*.jks
+*.keystore
