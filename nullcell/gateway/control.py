@@ -62,6 +62,19 @@ DIRECT_RETRY: Final[float] = 600.0
 Action = Any
 
 
+def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
+    """Título, descripción y etiquetas de un portal, acotados (§8)."""
+    meta = meta or {}
+    tags = meta.get("tags") or []
+    return {
+        "title": str(meta.get("title") or "")[:120],
+        "desc": str(meta.get("desc") or "")[:400],
+        "tags": [str(t)[:40] for t in tags if isinstance(t, str)][:8]
+        if isinstance(tags, list)
+        else [],
+    }
+
+
 class ControlError(Exception):
     """An action was refused. The message is shown to the operator."""
 
@@ -195,7 +208,10 @@ class ControlPanel:
         for portal in deployment.portals:
             with contextlib.suppress(ControlError):
                 await self.publish_folder(
-                    deployment.folder_for(portal), name=portal.name, save=False
+                    deployment.folder_for(portal),
+                    name=portal.name,
+                    save=False,
+                    meta={"title": portal.title, "desc": portal.desc, "tags": portal.tags},
                 )
             break  # one cell, one address, one portal (§3)
 
@@ -355,7 +371,12 @@ class ControlPanel:
 
     # --------------------------------------------------------------- portales
     async def publish_folder(
-        self, folder: str | Path, *, name: str | None = None, save: bool = True
+        self,
+        folder: str | Path,
+        *,
+        name: str | None = None,
+        save: bool = True,
+        meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Serve a folder as a portal, now locally and on the network when able."""
         root = Path(folder).expanduser().resolve()
@@ -374,6 +395,10 @@ class ControlPanel:
                 None if (root / "index.html").is_file() else "la carpeta no tiene index.html"
             ),
             "since": time.time(),
+            # Título, descripción y etiquetas: lo que el buscador indexa (§8).
+            # Vienen de `nullcell.toml`; sin ellos el portal sólo se encontraba
+            # por su nombre, y ni eso, porque no se publicaban palabras clave.
+            "meta": _clean_meta(meta),
         }
         await self._start_local(root)
         if save:
@@ -510,19 +535,31 @@ class ControlPanel:
             await site.close()
             raise ControlError("ningún punto de enlace se estableció todavía")
 
+        meta = self.portal.get("meta") or {}
         descriptor = ServiceDescriptor(
             pub=self.runtime.identity.public_key,
             x25519=service.x25519_public,
             intro_points=service.intro_points,
             name=self.portal.get("name") or "",
+            title=meta.get("title") or self.portal.get("name") or "",
+            desc=meta.get("desc", ""),
+            tags=list(meta.get("tags", [])),
         )
         stored = await self.runtime.publisher.publish_service(descriptor)
         self._site, self._service = site, service
+        # Que el propio índice lo conozca desde ya: el buscador de esta celda
+        # lo encuentra aunque el DHT tarde.
+        if (search := getattr(self.runtime, "search", None)) is not None:
+            with contextlib.suppress(Exception):
+                search.ingest(descriptor)
         self._portal_task = self.runtime.spawn(
             self.runtime.publisher.renew_forever(
-                descriptor=descriptor, name=self.portal.get("name")
+                descriptor=descriptor, name=self.portal.get("name"), keywords=True
             )
         )
+        # Las palabras clave cuestan prueba de trabajo cada una: en segundo
+        # plano, para no retrasar que el portal esté en línea.
+        self.runtime.spawn(self._publish_keywords(descriptor))
         self.portal.update(
             {
                 "state": "en línea",
@@ -566,7 +603,21 @@ class ControlPanel:
             return
         folder, name = self.portal["folder"], self.portal.get("name")
         log.info("hay relevos ajenos: el portal deja la vía directa")
-        await self.publish_folder(folder, name=name, save=False)
+        await self.publish_folder(folder, name=name, save=False, meta=self.portal.get("meta"))
+
+    async def _publish_keywords(self, descriptor: Any) -> None:
+        """Indexar el portal bajo sus propias palabras (§8, mecanismo 1)."""
+        try:
+            stored = await self.runtime.publisher.publish_keywords(descriptor)
+            if self.portal is not None:
+                self.portal["keywords"] = descriptor.keywords()[:12]
+            log.info(
+                "palabras clave publicadas: %s (%d copias)",
+                ", ".join(descriptor.keywords()[:12]),
+                stored,
+            )
+        except Exception as exc:  # noqa: BLE001 - se reintenta en la renovación
+            log.warning("no se pudieron publicar las palabras clave: %s", exc)
 
     async def run_forever(self) -> None:
         while True:

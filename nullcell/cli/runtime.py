@@ -251,7 +251,7 @@ class Runtime:
         indexer = Indexer(self.home / "index.db")
         indexer.start()
         self.indexer = indexer
-        self.search = Search(indexer, self.node)
+        self.search = Search(indexer, self.node, resolver=self.resolver)
         self.gossip = GossipService(self.identity, indexer=indexer)
         # The DHT serves the gossip op from here, so a peer asking us gets
         # answered from the same store the HUD reads.

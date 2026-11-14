@@ -128,8 +128,14 @@ class Publisher:
         descriptor: ServiceDescriptor | None = None,
         private: bool = False,
         name: str | None = None,
+        keywords: bool = False,
     ) -> None:
-        """Republish before the TTL lapses, for as long as the node runs (§9)."""
+        """Republish before the TTL lapses, for as long as the node runs (§9).
+
+        ``keywords`` renueva también las palabras clave del portal: tienen el
+        mismo TTL que el descriptor, y sin renovarlas el portal desaparecía del
+        buscador a la hora de publicarse aunque siguiera en línea.
+        """
         interval = max(60.0, self.ttl * (1.0 - RENEW_MARGIN))
         while True:
             await asyncio.sleep(interval)
@@ -141,6 +147,8 @@ class Publisher:
                     await self.publish_service(descriptor, private=private)
                 if name:
                     await self.publish_name(name)
+                if keywords and descriptor is not None and not private:
+                    await self.publish_keywords(descriptor)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

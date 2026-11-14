@@ -38,6 +38,94 @@ MAX_TAGS: Final[int] = 8
 _KINDS: Final[frozenset[str]] = frozenset({"web", "chat", "files", "other"})
 
 
+#: Palabras que no distinguen un portal de otro: publicarlas gastaría el cupo
+#: de 12 en lo que nadie busca. Sin acentos, como quedan tras normalizar.
+STOPWORDS: Final[frozenset[str]] = frozenset(
+    [
+        "que",
+        "como",
+        "del",
+        "los",
+        "las",
+        "una",
+        "uno",
+        "unos",
+        "unas",
+        "por",
+        "para",
+        "con",
+        "sin",
+        "sus",
+        "mas",
+        "pero",
+        "sobre",
+        "entre",
+        "desde",
+        "hasta",
+        "este",
+        "esta",
+        "estos",
+        "estas",
+        "ese",
+        "esa",
+        "eso",
+        "aqui",
+        "alli",
+        "muy",
+        "tan",
+        "todo",
+        "toda",
+        "todos",
+        "cual",
+        "cuales",
+        "donde",
+        "cuando",
+        "porque",
+        "tambien",
+        "ademas",
+        "les",
+        "nos",
+        "ser",
+        "son",
+        "estan",
+        "hay",
+        "fue",
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "are",
+        "was",
+        "you",
+        "your",
+        "our",
+        "its",
+        "not",
+        "but",
+        "all",
+        "any",
+        "can",
+    ]
+)
+
+
+def normalize_word(word: str) -> str:
+    """Una palabra tal como se indexa y se busca en el DHT (§8).
+
+    Minúsculas, sin acentos y sólo letras y números. El índice del DHT es de
+    coincidencia exacta, así que «documentación» y «documentacion» eran dos
+    palabras distintas: quien buscaba sin tilde —lo normal al teclear— no
+    encontraba nada. Se aplica igual al publicar y al buscar.
+    """
+    import unicodedata
+
+    plain = unicodedata.normalize("NFKD", word.lower())
+    return "".join(ch for ch in plain if ch.isalnum() and not unicodedata.combining(ch))
+
+
 def _text(value: Any, limit: int) -> str:
     """Bounded text from an untrusted descriptor."""
     return value[:limit] if isinstance(value, str) else ""
@@ -139,10 +227,13 @@ class ServiceDescriptor:
         built from these at publication time, so searching works from day one
         with no crawler.
         """
-        words: set[str] = set()
-        for source in (self.name, self.title, self.desc, " ".join(self.tags)):
-            for raw in source.lower().split():
-                word = "".join(ch for ch in raw if ch.isalnum())
-                if len(word) >= 3:
-                    words.add(word)
-        return sorted(words)
+        # Por orden de valor, porque se publican como mucho 12 (cada una cuesta
+        # prueba de trabajo): el nombre —lo que más se escribe en un buscador—,
+        # luego las etiquetas que eligió el autor, luego título y descripción.
+        ordered: list[str] = []
+        for source in (self.name, " ".join(self.tags), self.title, self.desc):
+            for raw in source.replace("-", " ").replace("_", " ").split():
+                word = normalize_word(raw)
+                if len(word) >= 3 and word not in STOPWORDS and word not in ordered:
+                    ordered.append(word)
+        return ordered
