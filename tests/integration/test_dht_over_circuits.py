@@ -321,3 +321,41 @@ def test_every_pure_client_command_is_wired_anonymous():
     # `node` is the documented exception: a publicly reachable relay doing
     # routing-table upkeep has no address to hide (§7).
     assert "anonymous=True" not in inspect.getsource(main.cmd_node)
+
+
+async def test_concurrent_lookups_over_one_circuit_each_get_their_own_answer():
+    """El buscador consulta 16 fragmentos a la vez por el mismo circuito.
+
+    Antes, cada petición sustituía el receptor de respuestas del circuito: las
+    demás se quedaban sin respuesta, y alguna recibía la de otra. Un nombre
+    registrado salía «no registrado» porque le llegaba la respuesta de un
+    fragmento de palabras clave vacío.
+    """
+    async with mesh(3) as relays:
+        owner = relays[1]
+        nombres = [f"portal{i}" for i in range(8)]
+        for nombre in nombres:
+            record = await R.build(owner.identity, R.RecordType.NAME, {"name": nombre})
+            await owner.node.store_record(record)
+
+        manager = CircuitManager()
+
+        async def path(node: Node) -> list[Hop]:
+            exit_hop = next(r.hop for r in relays if r.identity.public_key == node.pub)
+            return [exit_hop]
+
+        transport = CircuitTransport(path, manager)
+        client = KademliaNode(Identity.generate(), transport)
+        try:
+            client.table.add(owner.peer)
+            vacios = [R.keyword_key("nada", s) for s in range(8)]
+            resultados = await asyncio.gather(
+                *(client.find_value(R.name_key(n)) for n in nombres),
+                *(client.find_value(k) for k in vacios),
+            )
+            for nombre, found in zip(nombres, resultados[: len(nombres)], strict=True):
+                assert len(found) == 1, f"{nombre} no recibió su propia respuesta"
+                assert found[0].body["name"] == nombre
+            assert all(found == [] for found in resultados[len(nombres) :])
+        finally:
+            await client.close()

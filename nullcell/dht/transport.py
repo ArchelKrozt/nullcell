@@ -117,6 +117,13 @@ class CircuitTransport:
         self.stream_id = stream_id
         self._circuits: dict[bytes, Circuit] = {}
         self._lock = asyncio.Lock()
+        #: Una petición a la vez por circuito. La respuesta llega por el
+        #: `on_data` del circuito, que es **uno solo**: con dos peticiones en
+        #: vuelo, la segunda pisaba el receptor de la primera, que se quedaba
+        #: sin respuesta, y a veces recibía la de la otra. El buscador lanza
+        #: 16 consultas a la vez (una por fragmento del índice): casi todas
+        #: fallaban, y el nombre de un portal salía «no registrado».
+        self._in_flight: dict[bytes, asyncio.Lock] = {}
 
     async def _circuit_for(self, node: Node, timeout: float) -> Circuit:
         """A warm circuit whose exit is *node*, built once (§7)."""
@@ -140,6 +147,12 @@ class CircuitTransport:
     async def rpc(self, node: Node, request: bytes, *, timeout: float = 10.0) -> bytes:
         if not node.endpoints:
             raise TransportError(f"{node.short} has no known endpoint")
+        lock = self._in_flight.setdefault(node.pub, asyncio.Lock())
+        async with lock:
+            return await self._rpc_alone(node, request, timeout=timeout)
+
+    async def _rpc_alone(self, node: Node, request: bytes, *, timeout: float) -> bytes:
+        """Una petición con el circuito para ella sola (ver `_in_flight`)."""
         try:
             circuit = await self._circuit_for(node, timeout)
         except Exception as exc:
