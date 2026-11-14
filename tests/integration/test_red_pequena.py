@@ -210,3 +210,42 @@ def test_la_semilla_del_proyecto_viene_dentro_del_paquete():
     semillas = load_bootstrap()
     assert semillas, "bootstrap.json vacío o no encontrado"
     assert ids.encode_nid(semillas[0].pub).startswith("wuxq7z")
+
+
+async def test_un_relevo_que_no_contesta_no_deja_el_portal_en_local(tmp_path, monkeypatch):
+    """El caso real del VPS: conoce un relevo (la Pi) que figura como usable pero
+    no contesta desde fuera. El intento por él falla —con CertError, porque el
+    enlace se corta antes del certificado— y el portal debe pasar a la vía
+    directa en lugar de quedarse en «local» para siempre."""
+    import os
+
+    from nullcell.cli.runtime import Runtime
+    from nullcell.dht.records import RecordType, RelayBody, build
+    from nullcell.gateway import control as control_mod
+
+    monkeypatch.setattr(control_mod.reach_mod, "classify", lambda endpoint: "internet")
+    sitio = tmp_path / "sitio"
+    sitio.mkdir()
+    (sitio / "index.html").write_bytes(PAGE)
+    puerto = _free_port()
+    host = Runtime.assemble(
+        Identity.generate(),
+        tmp_path / "h",
+        endpoints=[f"127.0.0.1:{puerto}"],
+        hops="auto",
+        min_age=0,
+    )
+    await host.listen("127.0.0.1", puerto)
+    # Un relevo «usable» en el directorio que no existe de verdad.
+    fantasma = Identity.generate()
+    body = RelayBody(endpoints=[f"127.0.0.1:{_free_port()}"], x25519=os.urandom(32)).as_dict()
+    host.directory.ingest(await build(fantasma, RecordType.RELAY, body), pow_bits=30)
+    assert host.paths.ready
+    panel = control_mod.ControlPanel(host, home=tmp_path / "h")
+    try:
+        estado = await asyncio.wait_for(panel.publish_folder(sitio), 90)
+        assert estado["state"] == "en línea", panel.describe().get("last_error")
+        assert estado["direct"] is True
+    finally:
+        await panel.unpublish(save=False)
+        await host.close()

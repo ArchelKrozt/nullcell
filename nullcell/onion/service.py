@@ -205,7 +205,7 @@ class HiddenService:
                 try:
                     await self._establish_one(path)
                     break
-                except (CircuitError, MessageError, TimeoutError, OSError) as exc:
+                except Exception as exc:  # noqa: BLE001 - CertError, enlaces cortados…: se anota y se sigue
                     self.stats["failed"] += 1
                     log.info(
                         "intro point %s failed (attempt %d/%d): %s",

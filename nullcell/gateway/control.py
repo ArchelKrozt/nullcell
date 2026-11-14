@@ -58,6 +58,9 @@ RECONCILE_EVERY: Final[float] = 20.0
 #: Cada cuánto un portal servido por la vía directa (red pequeña) intenta
 #: pasar a la normal si han aparecido relevos ajenos.
 DIRECT_RETRY: Final[float] = 600.0
+#: Cuánto se intenta, en automático, poner los puntos de enlace en relevos
+#: ajenos antes de recurrir a la vía directa.
+OTHERS_BUDGET: Final[float] = 25.0
 
 Action = Any
 
@@ -564,10 +567,23 @@ class ControlPanel:
             if paths:
                 # En automático, un intento por punto: si los relevos ajenos no
                 # aceptan circuitos, quedan aún la vía directa y otro intento
-                # en la próxima pasada, sin bloquear minutos.
-                established = await service.establish(
-                    paths, attempts=1 if self.runtime.paths.auto else 3
-                )
+                # en la próxima pasada, sin bloquear minutos. Cualquier fallo
+                # —también un relevo que no contesta y corta el enlace antes
+                # del certificado— debe acabar en la vía directa, no en «local».
+                try:
+                    intento = service.establish(paths, attempts=1 if self.runtime.paths.auto else 3)
+                    # En automático, con presupuesto: un relevo que no contesta
+                    # agota el plazo de conexión en cada punto, uno tras otro, y
+                    # el portal tardaba minutos en llegar a la vía directa.
+                    established = (
+                        await asyncio.wait_for(intento, OTHERS_BUDGET)
+                        if self.runtime.paths.auto
+                        else await intento
+                    )
+                    established = established or len(service.intro_points)
+                except Exception as exc:  # noqa: BLE001
+                    log.info("los relevos ajenos no llevaron el punto de enlace: %s", exc)
+                    established = 0
         direct = False
         if not established and self._can_serve_alone():
             # Red pequeña: ningún relevo ajeno lleva circuitos, así que la
