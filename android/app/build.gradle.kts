@@ -13,8 +13,8 @@ android {
         applicationId = "net.nullcell.movil"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
         // Teléfonos de los últimos ~8 años. Cada ABI añade ~25 MB de Python.
         ndk { abiFilters += listOf("arm64-v8a") }
     }
@@ -59,6 +59,10 @@ chaquopy {
             install("cryptography==42.0.8")
             install("PyNaCl==1.5.0")
             install("pyOpenSSL<25")
+            // aioquic pide service-identity sin tope, y la 26 exige cryptography>=47
+            // (importa cryptography.hazmat.asn1): con la 42.0.8 el nodo no arrancaba.
+            // Chaquopy instala lo nativo aparte y no ve el choque; verificar-apk.sh sí.
+            install("service-identity==24.2.0")
             // Versión exacta de cada rueda preparada: si no, pip prefiere una
             // más nueva de PyPI que no tiene rueda para Android (cbor2 6 pide
             // Rust, aiohttp nativo…) e intenta compilarla.

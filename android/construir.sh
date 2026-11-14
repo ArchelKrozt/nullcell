@@ -48,3 +48,6 @@ mkdir -p "$AQUI/salida"
 cp "$AQUI/app/build/outputs/apk/release/app-release.apk" "$AQUI/salida/nullcell-$VERSION.apk"
 ls -la "$AQUI/salida/"
 echo "✓ android/salida/nullcell-$VERSION.apk"
+
+# El Python del APK, probado de verdad: versiones compatibles y el nodo arranca.
+bash "$AQUI/verificar-apk.sh" "$AQUI/salida/nullcell-$VERSION.apk"

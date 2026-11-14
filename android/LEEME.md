@@ -90,6 +90,8 @@ actualizaciones llegan dentro de la app.
 ## Publicar una versión
 
 1. Sube `versionCode` y `versionName` en `app/build.gradle.kts`.
-2. `bash android/construir.sh`
+2. `bash android/construir.sh` — al final ejecuta `verificar-apk.sh`, que prueba
+   el Python que va dentro del APK (versiones compatibles entre sí y el nodo
+   arrancando con el puente de la app). Si falla, no se publica.
 3. `GH_TOKEN=… bash android/publicar.sh "Qué cambia"` — crea la release
    `android-v<versión>` y sube el APK. Las apps instaladas la verán solas.
