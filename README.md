@@ -1,16 +1,373 @@
 # Nullcell
 
 [![CI](https://github.com/ArchelKrozt/nullcell/actions/workflows/ci.yml/badge.svg)](https://github.com/ArchelKrozt/nullcell/actions/workflows/ci.yml)
-[![License: AGPL v3](https://img.shields.io/badge/licencia-AGPL--3.0-blue)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+[![Android](https://img.shields.io/github/v/release/ArchelKrozt/nullcell?filter=android-v*&include_prereleases&label=android)](https://github.com/ArchelKrozt/nullcell/releases)
+
+**[English](#english) · [Español](#español)**
+
+---
+
+<a id="english"></a>
+
+## English
+
+An encrypted, anonymous peer-to-peer network: 3-hop onion circuits over QUIC, with no directory
+authorities. Self-certifying `.null` addresses. Python 3.11+, no root required.
+
+`https://nullcell.null` works knowing only its name, a portal needs no public IP and no open port,
+and the network starts working **with a single seed** — anonymity switches itself on as soon as
+there are three independent operators.
+
+The full architecture is in [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md) (Spanish).
+`§N` references in this README and in the code point to that document.
+
+> ### ⚠ What is verified and what is still open
+>
+> **Verified by tests, not inferred:** the middle hop of a circuit knows neither origin nor
+> destination; a tampered frame tears the circuit down; two endpoints talk without opening ports;
+> the rendezvous point forwards bytes it cannot read; a DHT node verifies a private descriptor
+> without knowing whose it is; a DHT lookup over a circuit carries nothing about who asked.
+>
+> **Still open, and the fundamental limit of the project (§7):** decentralized relay selection is
+> an open research problem. What exists is the pragmatic mitigation — pinned guards, prefix
+> diversity, minimum observed age, proof of work — **not a proven solution** against Sybil and
+> eclipse attacks. End-to-end traffic correlation is not solved either, same as in Tor.
+
+### Honest limits
+
+- **More cells don't mean more speed.** They give availability, path diversity and anonymity.
+  Latency grows with every hop: client↔service is **6 hops** with full anonymity, ~500–800 ms RTT.
+- **Throughput:** the measured ceiling is **~21 MB/s per link** (one core, loopback), set by
+  `aioquic`'s pure-Python QUIC processing, not by the protocol (§16).
+- **The network needs volunteer public relays.** You can browse and publish without opening
+  ports, but someone has to lend reachable bandwidth.
+- **Decentralized relay selection is an open problem** (see above). Tor uses a consensus signed by
+  9 authorities; Nullcell deliberately has none.
+- **A global adversary watching the whole network is outside the threat model.**
+- **Moving to post-quantum crypto will require rotating addresses**, because the address *is* the
+  public key (§3) — same as Tor v3.
+- **Legal note:** an anonymous network also attracts illegal content, and running a public relay
+  may bring complaints to the operator. Relaying is **explicit opt-in**, and the project ships no
+  detection-evasion tooling.
+
+### Where to start
+
+| You want to… | File / command |
+|---|---|
+| **browse from your phone** | the [Android app](#android-app) |
+| **understand the project** | [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md) |
+| **install it** | [`deploy/install.sh`](deploy/install.sh) |
+| **use it without a terminal** (tray icon, panel, browser) | `ncell desktop` — see [Desktop](#desktop) |
+| **just browse, without relaying** | `ncell browse` |
+| **run a relay** (what makes a network exist) | `ncell relay --announce YOUR_IP:4433` |
+| **run a relay seriously** | [`docs/RELAY_OP.md`](docs/RELAY_OP.md) |
+| **deploy on a VPS** | [`docs/VPS.md`](docs/VPS.md) |
+| **the wire format** | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) |
+| **the program's entry point** | [`nullcell/cli/main.py`](nullcell/cli/main.py) → `ncell` |
+| **how a cell is assembled** | [`nullcell/cli/runtime.py`](nullcell/cli/runtime.py) |
+
+### Installation
+
+```bash
+git clone https://github.com/ArchelKrozt/nullcell
+cd nullcell
+./deploy/install.sh
+```
+
+Or by hand:
+
+```bash
+python3 -m venv ~/.venvs/nullcell          # outside synced folders
+~/.venvs/nullcell/bin/pip install ".[dev]"
+~/.venvs/nullcell/bin/ncell --version
+```
+
+> **Don't put `~/.nullcell/` in iCloud, Dropbox or OneDrive.** Syncing `identity.key` takes your
+> private key off the machine, and syncing the SQLite databases corrupts them. `ncell` warns if it
+> detects it.
+
+### A small network: one seed is enough
+
+The project's seed (this repository's server, which hosts `nullcell.null`) ships inside the
+package in [`nullcell/bootstrap.json`](nullcell/bootstrap.json), so a fresh install can enter the
+network with no configuration. Everything defaults to `--hops auto`:
+
+| distinct operators | hops | anonymity | 10-min wait |
+|---|---|---|---|
+| 1 (only the seed) | 1 — the circuit goes direct | no | no |
+| 2 | 2 | no | no |
+| 3 or more, observed 10 min | 3 | **yes, automatically** | yes |
+
+- It is recomputed on every circuit, so a cell running for hours **switches to 3 hops as soon as
+  the third operator appears**, without restarting.
+- It counts **operators, not machines**: three relays at the same provider are one hop.
+- If the server hosting a portal has **no other relay** that can carry circuits, the portal is
+  **its own introduction point**. The connection is still end-to-end encrypted (QUIC between cells,
+  Noise NK between browser and portal, TLS against the local CA); what's missing is anonymity.
+  When foreign relays appear, the portal moves to the normal path by itself.
+- Every interface says so with a lock: **🔒 anonymous** or **⚠ not anonymous**.
+- `--hops 3` still exists for anyone who never wants to connect without anonymity.
+
+**The price, stated plainly:** with one hop, that relay sees both your IP and which portal you
+visit. With two, the first knows who you are and the second where you go. Content stays encrypted
+end to end; what you lose is **who talks to whom** — exactly what Nullcell exists to protect.
+
+**The 10-minute floor (`--min-age`).** A relay isn't used until *your* cell has observed it for 10
+minutes: nobody can fake how long you've been watching them, so it makes flooding the network with
+new identities expensive (§7, §10). In `auto` it only applies once there is anonymity to protect.
+
+**A cell doesn't count itself.** With N machines, whoever *publishes* has only N−1 relays to route
+through — using its own node as introduction point would announce its own address. That's why the
+self-introduction above is the explicit, labelled exception for a network of one.
+
+### Seeds that circulate
+
+A seed is a line like `wuxq7z…ih7ib@62.171.160.130:4433`. It is **not a secret or a credential**:
+an introduction and nothing more (§7). Everything learned through it is verified separately.
+
+- Cells **verify** the seeds you add (they must answer with their identity) and **exchange** them
+  with relays, receiving the ones they're missing. Each new user enters through more doors, and
+  the network stops depending on one.
+- Limits against eclipse attacks: few seeds per offer, few per network prefix, and seeds that keep
+  failing are dropped.
+- **Invitations** carry how to enter and which portal, in one line:
+
+```bash
+ncell invite --announce your-server.com:4433 --portal nullcell
+# nullcell://join?s=kopxc7…3fab@your-server.com:4433&p=nullcell
+```
+
+They are readable on purpose (you see which cells you'll connect to *before* pasting), carry
+several seeds (no single point of failure), and sign nothing.
+
+After the first entry the cell remembers who it met and rejoins by itself, without a seed.
+
+### Running a relay
+
+```bash
+ncell relay --announce YOUR_PUBLIC_IP:4433                 # first relay of a network
+ncell relay --announce YOUR_PUBLIC_IP:4433 --print-seed    # the line you give others
+ncell relay --announce THEIR_IP:4433 --seed THAT_LINE      # second operator
+```
+
+You need **one open UDP port** (QUIC is UDP) and a reachable IP. No root, domain or certificate.
+
+```bash
+./deploy/install.sh --relay YOUR_IP:4433     # systemd, unprivileged user
+journalctl -u nullcell-relay -f
+```
+
+`systemctl stop` sends `SIGTERM`, which **drains** live circuits instead of dropping them (§10).
+
+**Docker:** `cd deploy && ANNOUNCE=your.ip:4433 docker compose up -d`. The project's own server
+runs in a hardened container (read-only root, no capabilities, own network, only 4433/udp
+published). A 5-relay lab: `docker compose -f deploy/docker-compose.lab.yml up --build`.
+
+### Android app
+
+A `.null` browser for Android **with its own node**: the phone builds its own circuits, like the
+desktop. Nobody on the path — the project server included — sees which portals you open.
+
+**Download:** [latest release](https://github.com/ArchelKrozt/nullcell/releases) →
+`nullcell-<version>.apk` (Android 8+, 64-bit ARM). Open it on the phone and allow "install unknown
+apps".
+
+| Tab | |
+|---|---|
+| **Home** | Live status, anonymity ring (operators / 3), lock, cells, relays, seeds, recent activity |
+| **Search** | The network's search engine (by name, word or tag), queried over circuits |
+| **Browse** | `.null` browser with address bar, lock, back/forward, reload, menu |
+| **Seeds** | Add (paste a line or a `nullcell://` invitation), remove, exchange now, share |
+| **Settings** | Your address, auto-anonymity status, updates, what the browser protects, disconnect |
+
+- **One seed is enough**: the project's is bundled. It browses with 1 hop until the network has 3
+  operators, then goes anonymous by itself.
+- **Nothing goes to the normal internet** from pages: the WebView only loads `.null` addresses; any
+  image, font or script from the internet is blocked, since it would leave straight from the phone
+  and reveal your IP. No cache, no third-party cookies.
+- **The phone doesn't announce itself** or relay traffic: it only browses and shares seeds.
+- **It updates itself.** On launch (at most every 6 h) it checks this repository's
+  `android-v*` releases; if there's a newer one it asks, downloads it, **verifies the SHA-256
+  published by GitHub and that the signature matches the installed app**, and opens Android's
+  installer. This is the only thing the app sends to the normal internet (GitHub sees your IP), so
+  it can be turned off in Settings.
+
+The engine is the same Python code, embedded with [Chaquopy](https://chaquo.com/chaquopy/); the UI
+is Kotlin + Jetpack Compose. Building, signing and publishing: [`android/LEEME.md`](android/LEEME.md).
+
+### Desktop
+
+```bash
+pip install 'nullcell[desktop]'
+ncell desktop
+```
+
+A **NULL** icon appears in the menu bar. Its panel has a switch to share bandwidth, **publish a
+folder** as a `.null` portal (no ports opened), and the network's **browser** with search and the
+dashboard. Closing a window doesn't kill the node, and your choices are remembered.
+
+No terminal needed: double-click [`Nullcell.command`](Nullcell.command) on macOS, or run
+`python3 nullcell-escritorio.py`; `ncell launcher` creates a `Nullcell.app`.
+
+The browser needs no certificate authority: it registers the `null://` scheme and hands circuit
+bytes straight to the renderer. Each address is its own origin, so portals stay isolated. The local
+CA (§8) exists for those who prefer Firefox over SOCKS (`ncell browse`).
+
+> **PySide6 is pinned to 6.11.3 on purpose:** Qt stopped publishing QtWebEngine for macOS in 6.12.
+> `ncell desktop` doesn't run on a Raspberry Pi (no Qt wheels for ARM) — use `ncell node` there.
+
+### Publishing a named portal
+
+Everything that defines your presence fits in one folder, so moving to another machine is a copy:
+
+```
+my-deployment/
+  nullcell.toml     what YOU declare: what to publish, under which name, title, tags
+  estado.json       what the program changes while running
+  identity.key      (optional) this cell's identity
+```
+
+```bash
+ncell desktop --config ./my-deployment                              # with a UI
+ncell node --config ./my-deployment --announce your-ip:4433 --relay # headless (server, Pi)
+```
+
+`nullcell.toml` is only read, never rewritten, so your comments survive. Format and moving between
+machines: [`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md).
+
+> **The address *is* the key.** `nullcell.null` is a DHT name bound to an Ed25519 key, and the
+> 56-character address **is that key** (§3). Copy the folder **without `identity.key`** and the new
+> machine is a different cell with a different address.
+
+- The portal's **name, title, description and tags are published as search keywords**, renewed
+  automatically, so the network's search engine finds it by any of them (accents and case don't
+  matter).
+- If you switch the machine off, the name survives; the descriptor expires within an hour, and
+  visitors see **"the portal exists but is offline"**, not a generic error.
+- Visiting your own portal works from the first minute, labelled **"your portal · local"**.
+
+### Just browsing
+
+```bash
+ncell browse                         # the project seed is bundled
+ncell browse --seed <seed-line>      # add others so you don't depend on one
+```
+
+A client **opens no port**, needs no public IP, works behind NAT and **publishes nothing**. It
+presents no certificate either: link authentication is one-sided, so no relay sees your long-term
+key.
+
+**The only non-anonymous step is bootstrap**: you must talk to a seed directly to learn that relays
+exist, just as a Tor client downloads its first consensus directly. From then on, including **which
+names you resolve**, everything goes over circuits (§7, decision 8).
+
+Nullcell doesn't use Tor and can't be tunnelled through it: it runs on **QUIC (UDP)** and Tor only
+carries TCP.
+
+### IRC-style chat
+
+In the dashboard there is a chat: join a name, see who's there and what's said **while you're
+there**. Presence is a short-TTL DHT record under the channel key; after that there is **no
+server** — every member opens a rendezvous session with the others. Messages from before you joined
+don't arrive, it scales to a group (not a crowd), being in a channel is public, and chat uses its
+own identity (`chat.key`) separate from your portal's. Every message is signed.
+
+### Updates (desktop / server)
+
+```bash
+ncell update            # checks for a new version, and warns before contacting anything
+ncell update --no-check # only explains how to update, no network
+```
+
+The desktop and relay **never check by themselves**: a periodic request would tell a third-party
+server that a Nullcell node lives at that IP, every day. Typing the command *is* the consent. (The
+Android app does check, because installing APKs by hand is what people forget — and it can be
+switched off.)
+
+### Usage
+
+```bash
+ncell id                                   # your identity and address
+ncell addr <nid>                           # validate an address, offline
+ncell ping <nid> --addr 127.0.0.1:4433     # verified link + RTT
+
+ncell node --announce IP:4433 --hud        # full cell with local dashboard
+ncell relay --announce YOUR_IP:4433        # lend bandwidth
+ncell host ./my-site --name bakery --title "The Bakery"   # publish a portal
+ncell host app.py --wsgi app:application                   # or a WSGI app
+ncell publish bakery --announce IP:4433                    # register a name
+ncell resolve bakery.null                                  # look it up in the DHT
+ncell browse bakery.null                                   # open the browser
+ncell invite --announce IP:4433 --portal bakery            # one-line invitation
+```
+
+`--seed` is optional everywhere. `--hops` is `auto` by default on `node`, `browse` and
+`desktop`; `ncell host` always uses 3 hops (for a small network, publish with `ncell node --config`).
+
+### Status
+
+| Layer | Status |
+|---|---|
+| L0 Ed25519 + X25519 identity, 56-char addresses (§3) | ✅ |
+| L1a QUIC link, NID-bound certificate, fingerprint check, keepalive (§4) | ✅ |
+| 512 B cells, `RELAY` subheader, version negotiation (§5) | ✅ |
+| L1b Kademlia, signed descriptors with PoW, bootstrap and PEX (§7) | ✅ |
+| Readable first-come names `bakery.null` in the DHT (§8) | ✅ |
+| L2a 3-hop onion circuits, Noise NK, anti-tagging digest (§5) | ✅ |
+| Path selection: pinned guards, prefix diversity, minimum age (§7) | ✅ |
+| Automatic hops (`auto`) and single-seed networks | ✅ |
+| Seed verification and exchange between cells | ✅ |
+| L2b rendezvous, introduction points, 6 hops end to end (§6) | ✅ |
+| Private services: blinded index, encrypted body (§6) | ✅ |
+| DHT over circuits (decision 8) | ✅ |
+| L3/L4 multiplexed app streams over a session (§8) | ✅ |
+| `ncell host`, SOCKS5 with mandatory remote resolution, local CA (§8) | ✅ |
+| `ncell browse`: isolated Firefox profile (§8) | ✅ not tested with a real Firefox |
+| Search: FTS5 index, keyword shards, name lookup, explainable ranking (§8) | ✅ |
+| Signed observation gossip with Bloom filters, polite crawler (§8, §9) | ✅ |
+| Full HUD and desktop app with embedded browser (§9) | ✅ |
+| `PADDING` cover traffic (§5) | ✅ |
+| `ncell relay`: graceful shutdown, limits, seed line (§1, §10) | ✅ |
+| Deployment: Docker, systemd, installer (§12) | ✅ |
+| Android app with its own node and self-update | ✅ not yet tested on many phones |
+| HTTP/2 to the browser (§16, tactic 7) | ❌ reclassified, see §16 |
+| TUI, TUN mode (§13, M8) | ❌ |
+| Signed, subscribable block lists (§10) | ❌ |
+| ASN diversity (§7) | ❌ reason documented in §7 |
+
+### Development
+
+```bash
+~/.venvs/nullcell/bin/python -m pytest -q                # full suite (~730 tests)
+~/.venvs/nullcell/bin/python -m pytest -q -m "not slow"  # without the 30-cell mesh
+~/.venvs/nullcell/bin/python bench/link_throughput.py    # §16 gates
+~/.venvs/nullcell/bin/ruff check . && ruff format --check .
+```
+
+Contributing: [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) · Security reports:
+[`docs/SECURITY.md`](docs/SECURITY.md).
+
+### License
+
+AGPL-3.0-or-later — modifications to nodes that run on a network must be published.
+
+---
+
+<a id="español"></a>
+
+## Español
 
 Red P2P cifrada y anónima: circuitos onion de 3 saltos sobre QUIC, sin autoridades de directorio.
 Direcciones `.null` autocertificadas. Python 3.11+, sin root.
 
-**Estado: M7.** `https://panaderia.null` funciona conociendo solo el nombre, y el HUD local es
-también el buscador: portales con sus sellos criptográficos, topología del DHT, y búsqueda cuyo
-orden **se explica** en lugar de darte un número opaco. El portal no tiene IP pública, ni UPnP, ni
-un solo puerto abierto.
+`https://nullcell.null` funciona conociendo sólo el nombre, un portal no necesita IP pública ni
+puertos abiertos, y la red funciona **con una sola semilla**: el anonimato se enciende solo en
+cuanto hay tres operadores distintos.
+
+La arquitectura completa está en [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md). Las
+referencias `§N` de este README y del código apuntan a ese documento.
 
 > ### ⚠ Qué está verificado y qué sigue abierto
 >
@@ -24,64 +381,42 @@ un solo puerto abierto.
 > fijados, diversidad de prefijos, antigüedad mínima, PoW— **no una solución demostrada** frente a
 > ataques Sybil y de eclipse. Y la correlación de tráfico extremo a extremo no está resuelta, igual
 > que en Tor.
->
-> **Lo que no está probado aquí:** el lanzamiento real de Firefox. La cadena completa —SOCKS5 con
-> nombre, TLS validado contra la CA local, HTTP sobre 6 saltos— está verificada con un cliente que
-> hace exactamente lo que hace un navegador, pero **el perfil y la importación de la CA necesitan
-> un Firefox de verdad** y no se han ejecutado. `ncell browse` los monta; comprobarlo te toca a ti.
->
-> La importación de la CA necesita `certutil` de las herramientas NSS (macOS: `brew install nss`).
-> Si falta, `ncell browse` lo dice e imprime el comando, en lugar de fallar en silencio o —peor—
-> sugerir el almacén del sistema.
 
-La arquitectura completa está en [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md). Las
-referencias `§N` de este README y del código apuntan a ese documento.
-
----
-
-## Límites honestos
-
-Antes que nada, porque definen el proyecto:
+### Límites honestos
 
 - **Más celdas no dan más velocidad.** Dan disponibilidad, diversidad de rutas y anonimato. La
-  latencia sube con cada salto: cliente↔servicio son **6 saltos**, ~500-800 ms de ida y vuelta.
-- **Rendimiento:** el techo medido hoy es **~21 MB/s por enlace** (1 núcleo, loopback), y lo fija
-  el procesado de QUIC en Python puro de `aioquic`, no el diseño del protocolo (§16, hallazgos de
-  M1). Nullcell no va a dar el ancho de banda de tu línea.
+  latencia sube con cada salto: con anonimato completo, cliente↔servicio son **6 saltos**,
+  ~500-800 ms de ida y vuelta.
+- **Rendimiento:** el techo medido es **~21 MB/s por enlace** (1 núcleo, loopback), y lo fija el
+  QUIC en Python puro de `aioquic`, no el protocolo (§16).
 - **La red necesita relevos públicos voluntarios.** Puedes navegar y publicar sin abrir puertos,
-  pero alguien tiene que prestar ancho de banda alcanzable. Sin relevos no hay red.
-- **La selección descentralizada de relevos es un problema abierto de investigación.** Tor usa un
-  consenso firmado por 9 autoridades; nosotros no queremos autoridades. La mitigación de §7 (PoW,
-  diversidad de prefijos, verificación cruzada, listas opt-in) es pragmática, **no una solución
-  demostrada** frente a ataques Sybil y de eclipse.
-- **Correlación de tráfico extremo a extremo: no resuelta.** Tampoco en Tor. Mitigada con guards
-  fijos, marcos de tamaño uniforme y relleno.
+  pero alguien tiene que prestar ancho de banda alcanzable.
+- **La selección descentralizada de relevos es un problema abierto** (ver arriba). Tor usa un
+  consenso firmado por 9 autoridades; Nullcell no quiere ninguna.
 - **Un adversario global que observe toda la red está fuera del modelo de amenaza.**
-- **Migrar a cripto post-cuántica exigirá rotar direcciones**, porque la dirección lleva la clave
+- **Migrar a cripto post-cuántica exigirá rotar direcciones**, porque la dirección *es* la clave
   pública (§3). Igual que en Tor v3.
 - **Nota legal, sin rodeos:** una red anónima atrae también contenido ilegal, y operar un relevo
   público puede traer reclamos al operador. El relevo es **opt-in explícito** y el proyecto no
   incluye herramientas de evasión de detección.
 
-## Por dónde empieza todo
+### Por dónde empezar
 
 | Quieres… | Fichero / comando |
 |---|---|
-| **entender el proyecto** | [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md) — el documento del que todo lo demás sale. Las referencias `§N` del código apuntan ahí |
+| **navegar desde el teléfono** | la [app de Android](#app-de-android) |
+| **entender el proyecto** | [`NULLCELL-ARQUITECTURA.md`](NULLCELL-ARQUITECTURA.md) |
 | **instalarlo** | [`deploy/install.sh`](deploy/install.sh) |
 | **usarlo sin terminal** (icono, panel, navegador) | `ncell desktop` — ver [Escritorio](#escritorio) |
-| **sólo navegar, sin aportar un relevo** | `ncell browse --seed <semilla>` |
+| **sólo navegar, sin aportar un relevo** | `ncell browse` |
 | **levantar un relevo** (lo que hace que exista una red) | `ncell relay --announce TU_IP:4433` |
-| **el punto de entrada del programa** | [`nullcell/cli/main.py`](nullcell/cli/main.py) → `app`, declarado en `pyproject.toml` como el binario `ncell` |
-| **el relevo en sí** | [`nullcell/cli/relay.py`](nullcell/cli/relay.py) |
-| **cómo se ensambla una celda** | [`nullcell/cli/runtime.py`](nullcell/cli/runtime.py) |
 | **operar un relevo en serio** | [`docs/RELAY_OP.md`](docs/RELAY_OP.md) |
-| **montarlo en un VPS y entrar desde el teléfono** | [`docs/VPS.md`](docs/VPS.md) |
+| **montarlo en un VPS** | [`docs/VPS.md`](docs/VPS.md) |
 | **el formato de cable** | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) |
+| **el punto de entrada del programa** | [`nullcell/cli/main.py`](nullcell/cli/main.py) → `ncell` |
+| **cómo se ensambla una celda** | [`nullcell/cli/runtime.py`](nullcell/cli/runtime.py) |
 
-## Instalación
-
-### Rápida
+### Instalación
 
 ```bash
 git clone https://github.com/ArchelKrozt/nullcell
@@ -89,7 +424,7 @@ cd nullcell
 ./deploy/install.sh
 ```
 
-### A mano
+O a mano:
 
 ```bash
 python3 -m venv ~/.venvs/nullcell          # fuera de carpetas sincronizadas
@@ -97,364 +432,15 @@ python3 -m venv ~/.venvs/nullcell          # fuera de carpetas sincronizadas
 ~/.venvs/nullcell/bin/ncell --version
 ```
 
-> Con `pip install -e` (editable), si mueves o renombras la carpeta hay que **reinstalar**: la
-> instalación editable graba la ruta absoluta en el entorno virtual.
-
-## Levantar la primera red
-
-Una red de Nullcell **son relevos**. Sin ellos no hay nada, y por eso el primer paso de cualquier
-despliegue es levantar uno.
-
-```bash
-# 1. el primer relevo de la red: no tiene semillas, y eso es correcto
-ncell relay --announce TU_IP_PUBLICA:4433
-
-# 2. te imprime la línea que das a los demás
-ncell relay --announce TU_IP_PUBLICA:4433 --print-seed
-# jkssaepy2lvvfvds3paf3l42qgkxubxmsgw3tubcbmar56p7anzbcsyb@TU_IP:4433
-
-# 3. el segundo operador arranca así
-ncell relay --announce SU_IP:4433 --seed LA_LINEA_DE_ARRIBA
-```
-
-Una semilla **no es un secreto ni una credencial**: §7 dice que es una *presentación*, nada más.
-No firma nada, no avala nada, y todo registro aprendido a través de ella se verifica por separado.
-Publícala donde quieras.
-
-Necesitas **un puerto UDP abierto** (QUIC va sobre UDP) y una IP alcanzable. No necesitas root, ni
-dominio, ni certificado. Todo lo demás está en [`docs/RELAY_OP.md`](docs/RELAY_OP.md), incluida la
-parte legal.
-
-### Como servicio
-
-```bash
-./deploy/install.sh --relay TU_IP:4433     # systemd, usuario sin privilegios
-journalctl -u nullcell-relay -f
-```
-
-`systemctl stop` envía `SIGTERM`, que **vacía** los circuitos vivos antes de salir en lugar de
-tirarlos de golpe (§10).
-
-### Con Docker
-
-```bash
-cd deploy
-ANNOUNCE=tu.ip:4433 docker compose up -d
-docker compose logs | grep "seed line"
-```
-
-> **Sin construir:** el `Dockerfile` y los `compose` están escritos y validados sintácticamente,
-> pero en esta máquina no hay Docker, así que **nadie ha ejecutado `docker build`**. Si lo haces y
-> falla, es un fallo real y conviene saberlo.
-
-### Laboratorio
-
-```bash
-docker compose -f deploy/docker-compose.lab.yml up --build   # 5 relevos que se encuentran solos
-```
-
 > **No pongas `~/.nullcell/` en iCloud, Dropbox ni OneDrive.** Sincronizar `identity.key` saca tu
 > clave privada de la máquina y sincronizar las bases SQLite las corrompe. `ncell` avisa si lo
 > detecta.
 
-## Escritorio
-
-La consola no es sitio para una red en la que vives: no es persistente, y cambiar de opinión
-significa parar el proceso y arrancarlo con otro flag. `ncell desktop` es el mismo nodo con cara.
-
-```bash
-pip install 'nullcell[desktop]'
-ncell desktop
-```
-
-### Sin escribir nada: doble clic
-
-En la carpeta del proyecto hay dos ficheros equivalentes al comando de arriba:
-
-| fichero | para qué |
-|---|---|
-| [`Nullcell.command`](Nullcell.command) | doble clic en macOS: lo abre la Terminal |
-| [`nullcell-escritorio.py`](nullcell-escritorio.py) | `python3 nullcell-escritorio.py`, o ábrelo con la app de Python |
-
-La línea de comandos no cambia ni desaparece: esto es otra puerta a la misma habitación.
-
-Si tu entorno está en una ruta poco común, dilo y deja de ser adivinanza:
-
-```bash
-NULLCELL_PYTHON=/ruta/a/tu/venv/bin/python python3 nullcell-escritorio.py
-```
-
-> **Si lo abres con la app de Python, se relanza solo.** Un `.py` abierto así se ejecuta con el
-> Python del sistema, no con el entorno donde están las dependencias, y el resultado sería un
-> `ModuleNotFoundError` en una ventana que se cierra sola. El script busca un intérprete que sirva
-> y vuelve a arrancar con él; si no encuentra ninguno, lo dice en una ventana y explica cómo
-> instalarlo, en vez de desaparecer.
-
-También hay `ncell launcher`, que crea un `Nullcell.app` en `~/Applications` — mismo resultado sin
-ventana de Terminal detrás.
-
-Aparece un icono **NULL** en la barra de menús. Al pulsarlo se abre un panel con:
-
-- un **interruptor** para compartir ancho de banda, que dice la verdad sobre la asimetría: activarlo
-  publica el descriptor, y desactivarlo **deja de anunciar** pero no retracta el descriptor ya
-  publicado, que caduca por TTL;
-- **publicar una carpeta** como portal `.null`, con un selector nativo y sin abrir puertos;
-- el **navegador** de la red, con el buscador y el panel.
-
-Cerrar una ventana no mata el nodo, y las decisiones se guardan: al volver a abrirlo, lo que
-pediste sigue pedido.
-
-### Con un solo nodo, que es como empieza todo
-
-§7 no puede construir un circuito con una sola celda —hacen falta 3 relevos de operadores
-distintos, observados 10 minutos— y fingir lo contrario sería la única mentira imperdonable aquí.
-Así que el panel **funciona por intención**: declaras lo que quieres y el nodo lo cumple en cuanto
-puede.
-
-- **Publicar una carpeta funciona desde el primer minuto.** Se sirve en tu máquina, etiquetada
-  `sólo local`, con la *misma* aplicación que servirá el portal real —no es una maqueta— y pasa a
-  `en línea` sola en cuanto haya relevos.
-- **El panel dice qué falta y si toca esperar o actuar**, que son reacciones opuestas: un relevo
-  joven se arregla esperando y hay cuenta atrás; una red con un solo operador no se arregla
-  esperando nunca, y entonces lo que hace falta es una semilla. Hay una casilla para pegar la de
-  otro y un botón para copiar la tuya.
-- **El navegador sí se queda apagado** hasta que haya circuitos, porque ahí no hay media tinta.
-
-### Una red que acaba de nacer: `--hops`
-
-Hay un problema de arranque que conviene mirar de frente: §7 exige **3 operadores distintos**, así
-que en una red nueva no funciona nada hasta que haya gente, y no hay gente hasta que funcione algo.
-Exigirlo siempre significa que una red nueva no puede existir.
-
-```bash
-ncell desktop --hops auto   # los que la red permita; la privacidad se enciende sola
-ncell desktop --hops 1      # fijo en uno, aunque la red crezca
-```
-
-**`auto` es la respuesta al huevo y la gallina.** Exigir tres operadores siempre significa que una
-red nueva no puede existir; fijar un número bajo deja una red madura corriendo sin anonimato
-porque nadie volvió a cambiarlo. En automático, los saltos **suben con la red**:
-
-| operadores distintos | saltos | |
-|---|---|---|
-| 1 | 1 | como un navegador normal dentro de la red |
-| 2 | 2 | sigue sin haber anonimato |
-| **3 o más** | **3** | **anonimato activo, sin tocar nada** |
-
-Se recalcula cada vez que se construye un circuito, así que una celda encendida desde hace horas
-empieza a usar tres saltos **en cuanto aparece el tercer operador**, sin reiniciar. Cuenta
-operadores distintos y no máquinas: tres relevos del mismo proveedor son un salto, o «auto» sería
-una forma de creerse anónimo detrás de una sola empresa.
-
-El aviso en magenta desaparece solo cuando llega a tres.
-
-**`auto` es el valor por defecto del escritorio**, y lo es por una razón concreta: quien abre
-`Nullcell.command` con doble clic no puede pasar flags, así que todo lo que haya que escribir en
-una terminal es algo que esa persona no va a tener. Y `auto` **nunca da menos anonimato del que la
-red permite** — usa el máximo disponible en cada momento y lo sube solo.
-
-Lo que no puede ser un valor por defecto es un número bajo **fijo**: ése dejaría una red madura
-corriendo sin anonimato para siempre porque nadie volvió a cambiarlo.
-
-`ncell node`, en cambio, sigue pidiendo 3. Un servidor se configura a mano y se deja corriendo
-meses: ahí el estricto debe ser el valor por defecto, y relajarlo una decisión escrita en el
-comando.
-
-**El precio está escrito y no se puede no ver:** con un salto, ese único relevo ve tu IP y a qué
-portal vas, las dos cosas a la vez. Con dos, el primero sabe quién eres y el segundo adónde vas, y
-entre ellos lo saben todo. El contenido sigue cifrado extremo a extremo; lo que se pierde es
-**quién habla con quién**, que es justamente lo que Nullcell existe para proteger.
-
-Sirve para **probar tu propia red** —ver tu portal desde otra máquina, comprobar que el chat
-cruza— no para esconderte de nadie. El panel lo muestra en magenta arriba del todo mientras esté
-puesto, y la línea de comandos lo avisa al arrancar, porque un modo así se convierte en un ajuste
-que alguien puso una vez y olvidó.
-
-El valor por defecto sigue siendo 3, y lo seguirá siendo.
-
-#### La aritmética que sorprende: una celda no se cuenta a sí misma
-
-Con **N máquinas** en la red, quien **publica** un portal sólo tiene **N−1** relevos por los que
-pasar — el suyo no cuenta, porque un servicio que usara su propio nodo como punto de enlace
-estaría anunciando su propia dirección, que es lo contrario de un portal oculto.
-
-| máquinas en la red | quien navega | quien publica |
-|---|---|---|
-| 3 | hasta 3 saltos | hasta **2** |
-| 4 | hasta 4 | hasta 3 |
-
-Así que con tres máquinas, el lado que publica necesita `--hops 2`. Con cuatro, los tres saltos
-funcionan en los dos lados.
-
-#### `--min-age`: los 10 minutos
-
-Un relevo no se usa hasta que **tu** celda lo ha observado 10 minutos. No es burocracia: no se
-puede falsificar el tiempo que tú llevas viendo a alguien, así que ese plazo encarece inundar la
-red de identidades nuevas (§7, §10).
-
-En una red de tres máquinas tuyas no protege de nada y sólo hace esperar:
-
-```bash
-ncell desktop --hops 1 --min-age 0
-```
-
-Se avisa al arrancar, como todo lo que se relaja. En una red abierta, déjalo donde está.
-
-### Lo que compartir ancho de banda hace, y lo que no
-
-Compartir te convierte en **relevo**: ayudas a otros a construir circuitos. **No te conecta a la
-red.** Son dos cosas distintas y conviene no mezclarlas:
-
-| quieres… | necesitas |
-|---|---|
-| **entrar** a la red | conocer al menos otra celda: una **semilla**. No hay descubrimiento global |
-| **navegar** | 3 relevos de operadores distintos, observados 10 min (§7) |
-| **ser relevo** | que otros puedan alcanzarte: IP pública con el puerto UDP abierto, o la LAN |
-
-El escritorio detecta solo por dónde es alcanzable —**sin hacer ninguna petición a internet**: una
-consulta a un servicio de "cuál es mi IP" le diría a ese servicio que aquí hay un nodo— y el panel
-te dice cuál de los tres casos es el tuyo. En una LAN la semilla que te da funciona de verdad para
-los equipos de tu casa, que es la forma más fácil de levantar la primera red con dos ordenadores.
-
-**El navegador no necesita autoridad de certificación.** La CA de §8 existe para que un navegador
-ajeno acepte `https://…null`; el nuestro registra el esquema `null://` y entrega los bytes del
-circuito directamente al renderizador. Cada dirección sigue siendo su propio origen
-(`null://<56 chars>`), así que el aislamiento entre portales lo sigue dando el navegador. La CA
-sigue existiendo para quien prefiera Firefox vía SOCKS.
-
-> **PySide6 va fijada en 6.11.3 a propósito:** Qt dejó de publicar QtWebEngine para macOS en la
-> 6.12, así que una versión más nueva instala un escritorio sin navegador.
-
-## Publicar un portal con nombre, y mudarlo después
-
-Todo lo que define tu presencia en la red cabe en una carpeta, para que mudarse a una Raspberry Pi
-sea copiar y no reconstruir:
-
-```
-mi-despliegue/
-  nullcell.toml     lo que TÚ declaras: qué publicar y con qué nombre
-  estado.json       lo que el programa cambia en marcha
-  identity.key      (opcional) la identidad de esta celda
-```
-
-```bash
-ncell desktop                          # busca la configuración sola
-ncell desktop --config ./otra-carpeta  # o se lo dices tú
-```
-
-Sin `--config` se mira en la última carpeta usada, en la actual, en `./null-despliegue` y en
-`~/.nullcell/despliegue`. Si no hay ninguna, el escritorio **pregunta una vez** y recuerda la
-respuesta.
-
-> **El programa no reescribe tu declaración.** `nullcell.toml` lo escribes tú, con comentarios, y
-> sólo se lee; lo que cambia en marcha va a `estado.json`. Un programa que reescribe el fichero que
-> una persona edita a mano se lleva por delante sus comentarios, y en silencio. TOML antes que JSON
-> por eso mismo: admite comentarios, y una configuración que no puede explicarse a sí misma acaba
-> explicada en otro sitio que se desactualiza.
-
-El formato, la mudanza y lo que pasa si apagas la máquina están en
-[`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md).
-
-> **La dirección *es* la clave.** `nullcell.null` no es un dominio que alguien te alquile: es un
-> nombre en el DHT atado a una clave Ed25519, y la dirección de 56 caracteres del portal **es esa
-> clave** (§3). Si copias la carpeta a otra máquina **sin `identity.key`**, allí arranca una celda
-> distinta con otra dirección, y el nombre sigue apuntando a la vieja hasta que caduque. El
-> programa avisa.
-
-### Visitar tu propio portal con una sola máquina
-
-Funciona desde el primer momento. Escribe `nullcell.null` en el navegador y se abre, aunque no haya
-nadie más en la red: **visitar tu propio sitio no necesita circuito** porque eres los dos extremos,
-así que no hay tercero y no hay nada que anonimizar. La barra lo etiqueta **«tu portal · local»**,
-para que no se confunda con haberlo alcanzado por la red.
-
-El atajo vale **sólo para tu dirección y tu nombre declarado**, y ese límite es toda su seguridad:
-cualquier otro destino pasa por los circuitos, o esto se convertiría en una forma de servir algo
-local bajo el nombre de otro.
-
-### En una Raspberry Pi (o cualquier servidor sin pantalla)
-
-```bash
-ncell node --config ./mi-despliegue --announce tu-ip-o-dominio:4433 --relay
-```
-
-Publica los portales de la carpeta **sin interfaz gráfica**, que es como se corre en un servidor.
-Hay una unidad de systemd lista en [`deploy/nullcell-portal.service`](deploy/nullcell-portal.service).
-
-> **`ncell desktop` no funciona en una Pi**, y conviene saberlo antes de intentarlo: necesita
-> PySide6 y Qt **no publica ruedas para ARM**. El escritorio es para tu Mac; la Pi corre el nodo.
-
-Lo que sí hace falta llevarse: `identity.key` dentro de la carpeta, o la Pi será otra celda con
-otra dirección y tu nombre `.null` seguirá apuntando al Mac.
-
-### Actualizaciones
-
-```bash
-ncell update            # pregunta si hay versión nueva, y avisa antes de contactar
-ncell update --no-check # sólo dice cómo actualizar, sin tocar la red
-```
-
-**Nunca se comprueba solo.** No hay tarea de fondo ni comprobación al arrancar, y eso es una
-decisión, no un olvido: una petición periódica a un servidor ajeno le diría a ese servidor que hay
-un nodo Nullcell en esa IP, todos los días, con la regularidad de un reloj. Para un relevo que
-corre meses en un servidor es un registro de su existencia que nadie pidió. Que tengas que escribir
-el comando *es* el consentimiento.
-
-El comando también detecta **cómo** está instalado: sobre una copia del repositorio dice
-`git pull`, porque un `pip install --upgrade` ahí no hace nada visible y te deja convencido de que
-ya actualizaste.
-
-> **Lo que debería ser, y aún no es:** publicar las versiones como registros firmados en el propio
-> DHT. La consulta iría por circuito, así que nadie sabría quién pregunta, y la firma del
-> mantenedor sustituiría a la confianza en GitHub. Hace falta una red con gente para que sirva.
-
-### Chat tipo IRC, desde el navegador
-
-En el tablero (`ncell desktop` → **Navegador**, o `http://127.0.0.1:9180/?token=…`) hay un panel de
-chat: entras a un nombre, ves quién está y lo que se dice **mientras estás**.
-
-El «ping» que busca a otros programas activos no es un ping: es un registro de TTL corto en el DHT
-bajo la clave del canal, que dice *«estoy aquí, y se me alcanza por aquí»*. Quien quiera hablar
-consulta esa clave. Un multicast sólo cruzaría la red local; un ping directo exigiría saber a
-quién, que es el problema que esto resuelve.
-
-A partir de ahí **no hay servidor**: cada miembro abre una sesión de rendezvous con los demás y
-reparte cada mensaje a todos. Nadie «tiene» el canal y por nadie pasa todo.
-
-Tres cosas que conviene saber antes de usarlo:
-
-- **No llegan los mensajes de antes de entrar**, como en IRC. Lo contrario exige que alguien
-  almacene y reenvíe, y eso es un servidor con otro nombre.
-- **Escala a un grupo, no a una multitud.** Reparto completo: N miembros son N−1 envíos por
-  mensaje. A partir de unas decenas haría falta otra cosa.
-- **Estar en un canal es público.** Cualquiera puede consultar su clave y ver qué direcciones dicen
-  estar ahí; es inevitable en un canal abierto. Por eso el chat usa una **identidad propia**
-  (`chat.key`), distinta de la de tu portal: ver tu apodo en `#general` no debe revelar que eres
-  quien publica `nullcell.null`.
-
-Cada mensaje va **firmado**: la sesión ya cifra, pero en un canal cualquiera puede entregarte un
-mensaje y decir que lo escribió otro.
-
-### ¿Puede otro ordenador encontrar tu portal solo?
-
-**El nombre sí; la red no.** Conviene separarlo porque son dos cosas:
-
-- Una vez dentro, `nullcell.null` se resuelve **automáticamente** por el DHT, sin configurar nada.
-  Eso ya funciona.
-- Pero **entrar** no es automático: una celda recién instalada no conoce a nadie y **no hay
-  descubrimiento global**. Necesita una **semilla**, y alguien se la tiene que dar.
-
-Eso no es una pieza que falte, es la decisión central del diseño: un descubrimiento global sería
-una lista de arranque que alguien mantiene, es decir, una autoridad — exactamente lo que Nullcell
-no quiere tener. Tor lo resuelve con autoridades de directorio incrustadas; aquí
-[`nullcell/bootstrap.json`](nullcell/bootstrap.json) trae **una sola semilla**, la del servidor del
-proyecto (`nullcell.null`). Es una presentación, no una autoridad: no firma nada, todo lo aprendido
-por ella se verifica aparte, y cualquiera puede añadir las suyas.
-
-#### Red pequeña: con una semilla basta
-
-Por defecto todo arranca con `--hops auto`, y eso permite que una red de **un solo servidor**
-funcione:
+### Red pequeña: con una semilla basta
+
+La semilla del proyecto (el servidor de este repositorio, que aloja `nullcell.null`) viene dentro
+del paquete, en [`nullcell/bootstrap.json`](nullcell/bootstrap.json): una instalación nueva entra
+a la red sin configurar nada. Todo arranca por defecto con `--hops auto`:
 
 | operadores distintos | saltos | anonimato | espera de 10 min |
 |---|---|---|---|
@@ -462,180 +448,260 @@ funcione:
 | 2 | 2 | no | no |
 | 3 o más, ya observados 10 min | 3 | **sí, solo** | sí |
 
+- Se recalcula en cada circuito: una celda encendida desde hace horas **pasa a 3 saltos en cuanto
+  aparece el tercer operador**, sin reiniciar.
+- Cuenta **operadores, no máquinas**: tres relevos del mismo proveedor son un salto.
 - Si el servidor que aloja un portal **no tiene ningún otro relevo** que lleve circuitos, el portal
   es **su propio punto de enlace**. La conexión sigue cifrada de extremo a extremo (QUIC entre
   celdas, Noise NK entre navegador y portal, TLS contra la CA local); lo que no hay es anonimato.
-- En cuanto aparecen relevos ajenos, el portal pasa solo a la ruta normal (como mucho cada 10 min).
-- El panel lo dice siempre con un candado: **🔒 anónimo** o **⚠ sin anonimato**.
+  En cuanto aparecen relevos ajenos, el portal pasa solo a la ruta normal.
+- Todas las interfaces lo dicen con un candado: **🔒 anónimo** o **⚠ sin anonimato**.
 - `--hops 3` sigue existiendo para quien no quiera conectar nunca sin anonimato.
 
-#### Invitaciones: una sola cosa que copiar
+**El precio, escrito:** con un salto, ese relevo ve tu IP y a qué portal vas, las dos cosas a la
+vez. Con dos, el primero sabe quién eres y el segundo adónde vas. El contenido sigue cifrado
+extremo a extremo; lo que se pierde es **quién habla con quién**, que es justo lo que Nullcell
+existe para proteger.
+
+**El suelo de 10 minutos (`--min-age`).** Un relevo no se usa hasta que *tu* celda lo ha observado
+10 minutos: nadie puede falsificar el tiempo que tú llevas viéndolo, así que encarece inundar la
+red de identidades nuevas (§7, §10). En `auto` sólo se aplica cuando hay anonimato que proteger.
+
+**Una celda no se cuenta a sí misma.** Con N máquinas, quien *publica* sólo tiene N−1 relevos por
+los que pasar: usar su propio nodo como punto de enlace anunciaría su dirección. Por eso el punto de
+enlace propio de arriba es la excepción explícita, y etiquetada, para una red de uno.
+
+### Semillas que circulan
+
+Una semilla es una línea como `wuxq7z…ih7ib@62.171.160.130:4433`. **No es un secreto ni una
+credencial**: es una presentación y nada más (§7). Todo lo aprendido por ella se verifica aparte.
+
+- Las celdas **comprueban** las semillas que añades (tienen que contestar con su identidad) y las
+  **intercambian** con los relevos, recibiendo las que les faltan. Cada usuario nuevo entra por
+  más puertas y la red deja de depender de una.
+- Límites contra ataques de eclipse: pocas semillas por oferta, pocas por prefijo de red, y las que
+  fallan una y otra vez se descartan.
+- Las **invitaciones** llevan cómo entrar y a qué portal, en una línea:
 
 ```bash
 ncell invite --announce tu-servidor.com:4433 --portal nullcell
 # nullcell://join?s=kopxc7…3fab@tu-servidor.com:4433&p=nullcell
 ```
 
-Lleva **cómo entrar** y **a qué portal**, en una línea. El panel acepta esto o una semilla suelta
-en la misma casilla, porque pedirle a alguien que distinga entre las dos es pedirle que entienda
-una diferencia que no le importa.
+Son legibles a propósito (ves a qué celdas te conectarás *antes* de pegarla), llevan varias
+semillas (sin punto único de fallo) y no firman nada.
 
-Tres decisiones, cada una con su motivo:
+Después de la primera entrada, la celda recuerda a quién conoció y vuelve a entrar sola, sin
+semilla.
 
-- **Es legible, no base64.** Quien la recibe ve a qué celdas le dicen que se conecte *antes* de
-  pegarla. La primera conexión es directa y revela su IP: una invitación opaca pediría confianza
-  ciega justo donde más caro sale.
-- **Lleva varias semillas.** Una sola es un punto único de fallo, y también una forma de que una
-  celda concreta vea entrar a todo el mundo.
-- **No es una credencial.** No firma nada y no avala nada; todo lo aprendido a través de ella se
-  verifica por separado (§7). Eso es lo que impide que repartir invitaciones cree autoridades.
-
-El botón del panel genera la tuya con tu semilla **más algunos relevos que ya conoces**, para que
-siga funcionando un día que tu máquina esté apagada.
-
-Lo que sí es automático, desde ahora: **entras una vez y ya**. La celda guarda a quién conoció
-—incluso si el proceso muere de golpe— y al volver a abrirla rejunta sola, sin semilla.
-
-> **Tu Mac no necesita IP pública para publicar.** Un portal se alcanza por puntos de enlace y un
-> punto de encuentro, así que sirve detrás de NAT sin abrir ningún puerto (§0). Lo que sí hace
-> falta es que **existan relevos** por los que construir los circuitos.
-
-### Qué ve alguien si apagas la máquina
-
-El nombre no se pierde: el registro `NAME` sigue apuntando a tu clave. Lo que caduca —en una hora—
-es el *descriptor*, que dice por dónde alcanzarte. Quien visite verá **«el portal existe, pero está
-apagado»**, no un error genérico y no «no existe». Al encender vuelve solo.
-
-Son estados que se parecen desde fuera y significan cosas opuestas —uno no hay que esperarlo, el
-otro vuelve por sí mismo— así que el navegador los distingue en lugar de decir «no se pudo cargar
-la página».
-
-## Entrar sólo a navegar, sin aportar un relevo
-
-Navegar y prestar ancho de banda son **comandos distintos**, y el primero no necesita nada del
-segundo:
+### Levantar un relevo
 
 ```bash
-ncell id                                   # tu identidad, una vez
-ncell browse --seed <línea-de-semilla>     # a navegar
+ncell relay --announce TU_IP_PUBLICA:4433                 # primer relevo de una red
+ncell relay --announce TU_IP_PUBLICA:4433 --print-seed    # la línea que das a los demás
+ncell relay --announce SU_IP:4433 --seed ESA_LINEA        # el segundo operador
 ```
 
-Un cliente **no abre ningún puerto**, no necesita IP pública ni dominio, funciona detrás de NAT y
-**no publica nada** en el DHT. Tampoco presenta certificado: la autenticación del enlace es de un
-solo lado —el relevo demuestra quién es, el cliente no demuestra nada—, así que ningún relevo del
-camino ve tu clave de largo plazo.
+Necesitas **un puerto UDP abierto** (QUIC va sobre UDP) y una IP alcanzable. Sin root, dominio ni
+certificado.
 
-Lo que sí necesitas es que **otros** estén prestando relevos: §7 exige 3 saltos en operadores
-distintos y 10 minutos de antigüedad observada, así que una instalación nueva espera 10 minutos
-antes de poder construir su primer circuito. Si no hay ruta, el error dice cuál de los dos suelos
-falló y a cuántos relevos excluyó cada uno.
+```bash
+./deploy/install.sh --relay TU_IP:4433     # systemd, usuario sin privilegios
+journalctl -u nullcell-relay -f
+```
 
-**No se usa Tor, y no se puede.** Nullcell es su propia red: sus propios circuitos de 3 saltos, su
-propio cifrado por capas, su propio espacio de nombres `.null`. Y tunelizarla *a través* de Tor
-tampoco es una opción: Nullcell va sobre **QUIC, que es UDP**, y Tor sólo transporta TCP. No es una
-pieza que falte, es una incompatibilidad de transporte.
+`systemctl stop` envía `SIGTERM`, que **vacía** los circuitos vivos en lugar de tirarlos (§10).
 
-**Lo único que no es anónimo es el arranque**, y no puede serlo: hay que hablar con una semilla
-directamente para enterarse de que existe algún relevo —igual que un cliente de Tor descarga su
-primer consenso en directo—. A partir de ahí, incluido **qué nombres resuelves**, todo va por tres
-saltos (§7, decisión 8).
+**Docker:** `cd deploy && ANNOUNCE=tu.ip:4433 docker compose up -d`. El servidor del proyecto corre
+en un contenedor endurecido (raíz de sólo lectura, sin capacidades, red propia, sólo 4433/udp
+publicado). Laboratorio de 5 relevos: `docker compose -f deploy/docker-compose.lab.yml up --build`.
 
-## Uso
+### App de Android
+
+Navegador `.null` para Android **con nodo propio**: el teléfono arma sus propios circuitos, como el
+escritorio. Nadie en el camino —tampoco el servidor del proyecto— ve qué portales abres.
+
+**Descarga:** [última versión](https://github.com/ArchelKrozt/nullcell/releases) →
+`nullcell-<versión>.apk` (Android 8 o superior, ARM de 64 bits). Ábrelo en el teléfono y permite
+"instalar apps desconocidas".
+
+| Pestaña | |
+|---|---|
+| **Inicio** | Estado en vivo, anillo de anonimato (operadores / 3), candado, celdas, relevos, semillas, actividad |
+| **Buscar** | El buscador de la red (por nombre, palabra o etiqueta), consultado por circuitos |
+| **Navegar** | Navegador `.null` con barra de dirección, candado, atrás/adelante, recargar y menú |
+| **Semillas** | Añadir (pegar una línea o una invitación `nullcell://`), quitar, intercambiar ahora, compartir |
+| **Ajustes** | Tu dirección, estado del anonimato automático, actualizaciones, qué protege, desconectar |
+
+- **Una semilla basta**: la del proyecto viene incluida. Navega con 1 salto hasta que la red tenga
+  3 operadores, y entonces pasa sola a anónima.
+- **Las páginas no salen a internet normal**: el WebView sólo carga direcciones `.null`; una imagen,
+  fuente o script de internet se bloquea, porque saldría directo del teléfono y delataría tu IP.
+  Sin caché, sin cookies de terceros.
+- **El teléfono no se anuncia** ni presta ancho de banda: sólo navega y comparte semillas.
+- **Se actualiza sola.** Al abrirse (como mucho cada 6 h) mira las releases `android-v*` de este
+  repositorio; si hay una más nueva, pregunta, la descarga, **comprueba la huella SHA-256 que
+  publica GitHub y que la firma sea la misma que la de la app instalada**, y abre el instalador de
+  Android. Es lo único que la app envía a internet normal (GitHub ve tu IP), así que se puede
+  apagar en Ajustes.
+
+El motor es el mismo código Python, embebido con [Chaquopy](https://chaquo.com/chaquopy/); la
+interfaz es Kotlin + Jetpack Compose. Compilar, firmar y publicar:
+[`android/LEEME.md`](android/LEEME.md).
+
+### Escritorio
+
+```bash
+pip install 'nullcell[desktop]'
+ncell desktop
+```
+
+Aparece un icono **NULL** en la barra de menús. Su panel tiene un interruptor para compartir ancho
+de banda, **publicar una carpeta** como portal `.null` (sin abrir puertos) y el **navegador** de la
+red con el buscador y el tablero. Cerrar una ventana no mata el nodo, y las decisiones se guardan.
+
+Sin terminal: doble clic en [`Nullcell.command`](Nullcell.command) en macOS, o
+`python3 nullcell-escritorio.py`; `ncell launcher` crea un `Nullcell.app`.
+
+El navegador no necesita autoridad de certificación: registra el esquema `null://` y entrega los
+bytes del circuito directamente al renderizador. Cada dirección es su propio origen, así que los
+portales siguen aislados. La CA local (§8) existe para quien prefiera Firefox vía SOCKS
+(`ncell browse`).
+
+> **PySide6 va fijada en 6.11.3 a propósito:** Qt dejó de publicar QtWebEngine para macOS en la
+> 6.12. `ncell desktop` no funciona en una Raspberry Pi (Qt no publica ruedas para ARM): ahí se usa
+> `ncell node`.
+
+### Publicar un portal con nombre
+
+Todo lo que define tu presencia cabe en una carpeta, para que mudarse sea copiar:
+
+```
+mi-despliegue/
+  nullcell.toml     lo que TÚ declaras: qué publicar, con qué nombre, título y etiquetas
+  estado.json       lo que el programa cambia en marcha
+  identity.key      (opcional) la identidad de esta celda
+```
+
+```bash
+ncell desktop --config ./mi-despliegue                              # con interfaz
+ncell node --config ./mi-despliegue --announce tu-ip:4433 --relay   # sin interfaz (servidor, Pi)
+```
+
+`nullcell.toml` sólo se lee, nunca se reescribe, así que tus comentarios sobreviven. Formato y
+mudanzas: [`docs/DESPLIEGUE.md`](docs/DESPLIEGUE.md).
+
+> **La dirección *es* la clave.** `nullcell.null` es un nombre en el DHT atado a una clave Ed25519,
+> y la dirección de 56 caracteres **es esa clave** (§3). Si copias la carpeta **sin
+> `identity.key`**, la otra máquina es otra celda con otra dirección.
+
+- El **nombre, título, descripción y etiquetas** del portal se publican como palabras clave del
+  buscador, y se renuevan solos: el buscador de la red lo encuentra por cualquiera de ellos (sin
+  importar tildes ni mayúsculas).
+- Si apagas la máquina, el nombre se conserva; el descriptor caduca en una hora y quien visite ve
+  **«el portal existe, pero está apagado»**, no un error genérico.
+- Visitar tu propio portal funciona desde el primer minuto, etiquetado **«tu portal · local»**.
+
+### Sólo navegar
+
+```bash
+ncell browse                         # la semilla del proyecto viene incluida
+ncell browse --seed <semilla>        # añade otras para no depender de una
+```
+
+Un cliente **no abre ningún puerto**, no necesita IP pública, funciona detrás de NAT y **no publica
+nada**. Tampoco presenta certificado: la autenticación del enlace es de un solo lado, así que
+ningún relevo ve tu clave de largo plazo.
+
+**Lo único que no es anónimo es el arranque**: hay que hablar con una semilla directamente para
+saber que existen relevos, igual que un cliente de Tor descarga su primer consenso en directo. A
+partir de ahí, incluido **qué nombres resuelves**, todo va por circuitos (§7, decisión 8).
+
+Nullcell no usa Tor ni puede ir a través de él: va sobre **QUIC (UDP)** y Tor sólo transporta TCP.
+
+### Chat tipo IRC
+
+En el tablero hay un chat: entras a un nombre, ves quién está y lo que se dice **mientras estás**.
+La presencia es un registro de TTL corto en el DHT bajo la clave del canal; a partir de ahí **no
+hay servidor**: cada miembro abre una sesión de rendezvous con los demás. No llegan los mensajes de
+antes de entrar, escala a un grupo (no a una multitud), estar en un canal es público, y el chat usa
+una identidad propia (`chat.key`), distinta de la de tu portal. Cada mensaje va firmado.
+
+### Actualizaciones (escritorio / servidor)
+
+```bash
+ncell update            # pregunta si hay versión nueva, y avisa antes de contactar
+ncell update --no-check # sólo dice cómo actualizar, sin tocar la red
+```
+
+El escritorio y el relevo **nunca comprueban solos**: una petición periódica le diría a un servidor
+ajeno que hay un nodo Nullcell en esa IP, todos los días. Escribir el comando *es* el
+consentimiento. (La app de Android sí comprueba, porque instalar APKs a mano es justo lo que se
+olvida, y se puede apagar.)
+
+### Uso
 
 ```bash
 ncell id                                   # tu identidad y tu dirección
 ncell addr <nid>                           # valida una dirección, sin tocar la red
-ncell listen --port 4433                   # solo enlace, sin DHT
 ncell ping <nid> --addr 127.0.0.1:4433     # enlace verificado + RTT
 
-ncell node --port 4433 --announce IP:4433 --seed <nid>@host:puerto   # celda completa
-ncell publish panaderia --announce IP:4433 --seed <nid>@host:puerto  # registra nombre
-ncell resolve panaderia.null --seed <nid>@host:puerto                # busca en el DHT
-ncell node --hud                                                     # con panel local
-
-ncell relay --announce TU_IP:4433                                     # prestar ancho de banda
-ncell host ./mi-sitio --name panaderia --title "La Panadería"         # publicar un portal
-ncell host app.py --wsgi app:application                              # o una app WSGI
-ncell browse panaderia.null                                          # abrir el navegador
-ncell resolve panaderia.null                                         # ver sus puntos de enlace
+ncell node --announce IP:4433 --hud        # celda completa con panel local
+ncell relay --announce TU_IP:4433          # prestar ancho de banda
+ncell host ./mi-sitio --name panaderia --title "La Panadería"   # publicar un portal
+ncell host app.py --wsgi app:application                         # o una app WSGI
+ncell publish panaderia --announce IP:4433                       # registrar un nombre
+ncell resolve panaderia.null                                     # buscarlo en el DHT
+ncell browse panaderia.null                                      # abrir el navegador
+ncell invite --announce IP:4433 --portal panaderia               # invitación de una línea
 ```
 
-`ncell host` y `ncell browse` eligen sus rutas con la selección de §7. Con `--hops 3`, un nodo
-recién instalado **tiene que esperar 10 minutos** antes de poder construir un circuito: es el suelo
-de antigüedad observada. En automático (por defecto) ese suelo sólo se aplica cuando ya hay
-anonimato que proteger.
+`--seed` es opcional en todos. `--hops` es `auto` por defecto en `node`, `browse` y `desktop`;
+`ncell host` usa siempre 3 saltos (en una red pequeña, publica con `ncell node --config`).
 
-`--seed` es opcional: la semilla del proyecto viene incluida. Añade otras para no depender de una.
-
-Dos celdas en la misma máquina:
-
-```bash
-NULLCELL_HOME=/tmp/a ncell id              # copia el NID
-NULLCELL_HOME=/tmp/a ncell listen --host 127.0.0.1 --port 4455 &
-NULLCELL_HOME=/tmp/b ncell ping <NID-de-a> --addr 127.0.0.1:4455
-```
-
-`--addr` es temporal: hasta el DHT de M2 no hay forma de resolver un NID a un endpoint.
-
-## Qué funciona y qué no
+### Estado
 
 | Capa | Estado |
 |---|---|
-| L0 identidad Ed25519 + X25519, direcciones de 56 chars (§3) | ✅ |
-| L1a enlace QUIC, certificado ligado al NID, verificación de huella (§4) | ✅ |
+| L0 identidad Ed25519 + X25519, direcciones de 56 caracteres (§3) | ✅ |
+| L1a enlace QUIC, certificado ligado al NID, huella, keepalive (§4) | ✅ |
 | Marcos de 512 B, subcabecera `RELAY`, negociación de versión (§5) | ✅ |
 | L1b Kademlia, descriptores firmados con PoW, bootstrap y PEX (§7) | ✅ |
 | Nombres legibles `panaderia.null` first-come en el DHT (§8) | ✅ |
-| Baliza multicast en LAN, opt-in (§7) | ✅ |
 | L2a circuitos onion de 3 saltos, Noise NK, digest anti-etiquetado (§5) | ✅ |
 | Selección de ruta: guards fijados, diversidad de prefijos, antigüedad mínima (§7) | ✅ |
-| SENDME por circuito y por stream, vida del circuito (§5) | ✅ |
-| HUD mínimo de depuración, `ncell node --hud` (§9) | ✅ |
+| Saltos automáticos (`auto`) y redes de una sola semilla | ✅ |
+| Verificación e intercambio de semillas entre celdas | ✅ |
 | L2b rendezvous, puntos de enlace, 6 saltos extremo a extremo (§6) | ✅ |
 | Servicios privados: índice cegado y cuerpo cifrado (§6) | ✅ |
-| DHT por circuitos, con circuito de directorio reutilizado (decisión 8) | ✅ |
+| DHT por circuitos (decisión 8) | ✅ |
 | L3/L4 streams de app multiplexados sobre una sesión (§8) | ✅ |
-| `ncell host`: carpeta servida sobre circuitos, cero port forwarding (§8) | ✅ |
-| SOCKS5 con resolución remota obligatoria (§8) | ✅ |
-| CA local con restricción de nombres, solo en el perfil dedicado (§8) | ✅ |
+| `ncell host`, SOCKS5 con resolución remota obligatoria, CA local (§8) | ✅ |
 | `ncell browse`: perfil aislado de Firefox (§8) | ✅ sin probar con Firefox real |
-| Descriptores de portal, publicación y renovación automática (§8) | ✅ |
-| Nombres legibles resueltos en el DHT, alias locales, nombres reservados (§8, §9) | ✅ |
-| Selección de ruta de §7 en uso real: un solo sitio elige saltos | ✅ |
-| HTTP/2 hacia el navegador (§16, táctica 7) | ❌ — reclasificada, ver §16 |
-| Buscador: índice FTS5, lookups DHT concurrentes, ranking explicable (§8) | ✅ |
-| Gossip de observaciones firmadas con Bloom filters (§8, §9) | ✅ |
-| Crawler educado sobre circuitos, `robots.txt` obligatorio (§8) | ✅ |
-| HUD completo: portales con sellos, topología, buscador (§9) | ✅ |
-| Relleno `PADDING`: las dos máquinas de §5 | ✅ |
+| Buscador: índice FTS5, fragmentos de palabras clave, búsqueda por nombre, ranking explicable (§8) | ✅ |
+| Gossip de observaciones firmadas con Bloom filters, crawler educado (§8, §9) | ✅ |
+| HUD completo y app de escritorio con navegador embebido (§9) | ✅ |
+| Relleno `PADDING` (§5) | ✅ |
 | `ncell relay`: apagado elegante, límites, línea de semilla (§1, §10) | ✅ |
-| Despliegue: Docker, systemd, instalador, `docs/RELAY_OP.md` (§12) | ✅ sin construir la imagen |
-| Proxy HTTP en `:9151`, sólo `CONNECT` (§8) | ✅ |
-| TUI (§13, M8) | ❌ |
+| Despliegue: Docker, systemd, instalador (§12) | ✅ |
+| App de Android con nodo propio y autoactualización | ✅ aún sin probar en muchos teléfonos |
+| HTTP/2 hacia el navegador (§16, táctica 7) | ❌ reclasificada, ver §16 |
+| TUI, modo TUN (§13, M8) | ❌ |
 | Listas de bloqueo firmadas y suscribibles (§10) | ❌ |
-| Modo TUN y navegador embebido (§13, M8, opcionales) | ❌ |
-| Diversidad por ASN (§7) | ❌ — ver §7, el motivo está documentado |
-| L2b rendezvous, intro points (§6) | ❌ M4 |
-| SOCKS5, CA local, `ncell browse`, `ncell host` (§8) | ❌ M5 |
-| Buscador y HUD (§8, §9) | ❌ M7 |
+| Diversidad por ASN (§7) | ❌ el motivo está documentado en §7 |
 
-**El cliente es anónimo ya en la capa de enlace** (§4): el relevo prueba quién es con su
-certificado, el cliente no presenta ninguno. Esa asimetría es deliberada. Pero el anonimato
-*frente a la red* necesita los circuitos de M3 — ver el aviso de arriba.
-
-## Desarrollo
+### Desarrollo
 
 ```bash
-~/.venvs/nullcell/bin/python -m pytest -q                # toda la suite
+~/.venvs/nullcell/bin/python -m pytest -q                # toda la suite (~730 pruebas)
 ~/.venvs/nullcell/bin/python -m pytest -q -m "not slow"  # sin la malla de 30 celdas
 ~/.venvs/nullcell/bin/python bench/link_throughput.py    # puertas de §16
 ~/.venvs/nullcell/bin/ruff check . && ruff format --check .
 ```
 
-La prueba de éxito de M2 (§13) es `test_thirty_cells_find_each_other_and_route`, marcada `slow`:
-30 celdas en un proceso, con QUIC real, que arrancan desde una semilla y resuelven un descriptor
-que la celda buscadora no tiene en local.
+Contribuir: [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) · Reportes de seguridad:
+[`docs/SECURITY.md`](docs/SECURITY.md).
 
-## Licencia
+### Licencia
 
-AGPL-3.0-or-later — obliga a publicar las modificaciones de los nodos que operen en red.
+AGPL-3.0-or-later: obliga a publicar las modificaciones de los nodos que operen en red.
