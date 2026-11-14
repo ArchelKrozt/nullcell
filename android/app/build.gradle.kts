@@ -13,17 +13,28 @@ android {
         applicationId = "net.nullcell.movil"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
         // Teléfonos de los últimos ~8 años. Cada ABI añade ~25 MB de Python.
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
+    // Clave de publicación: SIEMPRE la misma, o Android rechaza las actualizaciones.
+    // Vive fuera del repo; construir.sh la monta y pasa su ruta y contraseña.
+    val almacen = System.getenv("NULLCELL_FIRMA")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (almacen != null) create("publicacion") {
+            storeFile = almacen
+            storePassword = System.getenv("NULLCELL_FIRMA_CLAVE")
+            keyAlias = "nullcell"
+            keyPassword = System.getenv("NULLCELL_FIRMA_CLAVE")
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Firmado con la clave de depuración hasta que haya una de publicación.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("publicacion")
+                ?: error("Falta la clave de firma (NULLCELL_FIRMA): sin ella las actualizaciones no instalarían")
         }
     }
     compileOptions {

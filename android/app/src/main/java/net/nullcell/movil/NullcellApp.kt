@@ -10,5 +10,6 @@ class NullcellApp : Application() {
         super.onCreate()
         if (!Python.isStarted()) Python.start(AndroidPlatform(this))
         Nodo.init(this)
+        Actualizador.init(this)
     }
 }

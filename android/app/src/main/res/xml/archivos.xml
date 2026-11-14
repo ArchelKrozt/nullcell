@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lo único que la app entrega a otra (el instalador de Android): la actualización descargada. -->
+<paths>
+    <cache-path name="actualizacion" path="actualizacion/" />
+</paths>

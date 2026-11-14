@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Instalar las actualizaciones de la propia app (siempre con confirmación del usuario). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".NullcellApp"
@@ -36,6 +38,17 @@
                 <data android:scheme="nullcell" />
             </intent-filter>
         </activity>
+
+        <!-- Entrega el APK descargado al instalador de Android. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.archivos"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/archivos" />
+        </provider>
 
         <!-- Mantiene vivo el nodo mientras navegas con la app en segundo plano. -->
         <service

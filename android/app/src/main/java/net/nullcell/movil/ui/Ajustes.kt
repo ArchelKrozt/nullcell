@@ -84,8 +84,9 @@ fun PantallaAjustes(e: Estado, avisar: (String) -> Unit, salir: () -> Unit) {
                 ).forEach { Text("• $it", style = MaterialTheme.typography.bodySmall, color = C.tenue, modifier = Modifier.padding(vertical = 3.dp)) }
             }
         }
+        item { TarjetaActualizaciones() }
         item {
-            Opcion(Icons.Filled.Info, "Acerca de", "Nullcell 0.1.0 · AGPL-3.0 · github.com/ArchelKrozt/nullcell", C.tenue) {
+            Opcion(Icons.Filled.Info, "Acerca de", "Nullcell ${net.nullcell.movil.Actualizador.versionActual} · AGPL-3.0 · github.com/ArchelKrozt/nullcell", C.tenue) {
                 portapapeles.setText(AnnotatedString("https://github.com/ArchelKrozt/nullcell")); avisar("Enlace copiado")
             }
         }

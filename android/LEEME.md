@@ -14,7 +14,7 @@ Kotlin + Jetpack Compose.
 | **Buscar** | El buscador de la red (por nombre, palabra o etiqueta). Las consultas van por circuitos |
 | **Navegar** | Navegador de portales `.null` con barra de dirección, candado, atrás/adelante, recargar y menú |
 | **Semillas** | Gestor: añadir (hoja inferior, pegar línea o invitación `nullcell://`), quitar (con confirmación), intercambiar ahora, compartir la invitación |
-| **Ajustes** | Tu dirección, estado del anonimato automático, qué protege el navegador, desconectar |
+| **Ajustes** | Tu dirección, estado del anonimato automático, actualizaciones, qué protege el navegador, desconectar |
 
 - **Una semilla basta.** La del servidor del proyecto viene incluida. Con un
   solo operador en la red se navega con 1 salto (cifrado, sin anonimato); con 3
@@ -27,6 +27,12 @@ Kotlin + Jetpack Compose.
   teléfono y delataría tu IP. Sin caché, sin cookies de terceros.
 - **El teléfono no se anuncia** ni presta ancho de banda: sólo navega.
 - Las invitaciones `nullcell://join?s=…` abren la app con la semilla lista.
+- **Se actualiza sola.** Al abrirse (como mucho cada 6 h) mira las *releases*
+  `android-v*` de GitHub; si hay una más nueva, avisa con una ventana,
+  descarga el APK con barra de progreso, **comprueba la huella SHA-256 que
+  publica GitHub y que la firma sea la misma que la de la app instalada**, y
+  abre el instalador de Android. Es lo único que sale a internet normal (GitHub
+  ve la IP), así que se puede apagar en Ajustes y buscar a mano.
 
 ## Construir
 
@@ -68,6 +74,22 @@ python.stdout python.stderr` dice qué.
 
 ## Firma
 
-El APK va firmado con la **clave de depuración** de Android. Sirve para
-instalarlo a mano; para publicarlo hace falta una clave propia (y guardarla bien:
-sin ella no se pueden publicar actualizaciones).
+Firmado con una **clave de publicación propia**, guardada fuera del repo en
+`/srv/storage/nucleo/nullcell-server/claves/` (`nullcell-movil.jks` y su
+contraseña en `clave.txt`). `construir.sh` la monta en sólo lectura y se niega
+a compilar sin ella.
+
+**Haz copia de seguridad de esa carpeta.** Android sólo acepta una
+actualización si va firmada con la misma clave: si se pierde, todos los
+teléfonos tendrán que desinstalar la app y volver a instalarla.
+
+La 0.1.0 iba con una clave de depuración desechable: quien la tenga instalada
+debe desinstalarla e instalar la 0.1.1 a mano una vez. Desde la 0.1.1 las
+actualizaciones llegan dentro de la app.
+
+## Publicar una versión
+
+1. Sube `versionCode` y `versionName` en `app/build.gradle.kts`.
+2. `bash android/construir.sh`
+3. `GH_TOKEN=… bash android/publicar.sh "Qué cambia"` — crea la release
+   `android-v<versión>` y sube el APK. Las apps instaladas la verán solas.

@@ -14,6 +14,10 @@
 set -euo pipefail
 AQUI="$(cd "$(dirname "$0")" && pwd)"
 CADENA="${CADENA:-/srv/storage/nucleo/webapps/rpg/cliente_apk/.cadena}"
+# La clave de firma: fuera del repo y siempre la misma (si cambia, los
+# teléfonos no pueden actualizar). ¡Haz copia de seguridad de esta carpeta!
+CLAVES="${CLAVES:-/srv/storage/nucleo/nullcell-server/claves}"
+[ -f "$CLAVES/nullcell-movil.jks" ] && [ -f "$CLAVES/clave.txt" ] || { echo "✗ falta la clave de firma en $CLAVES" >&2; exit 1; }
 [ -x "$CADENA/jdk/bin/java" ] || { echo "✗ falta la cadena Android en $CADENA" >&2; exit 1; }
 
 if [ ! -f "$AQUI/ruedas/nullcell-0.1.0-py3-none-any.whl" ] || [ "${RUEDAS:-}" = "1" ]; then
@@ -27,6 +31,9 @@ mkdir -p "$AQUI/.cadena/gradle-home"
 docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
   -v "$AQUI":/proyecto \
   -v "$CADENA":/cadena:ro \
+  -v "$CLAVES":/claves:ro \
+  -e NULLCELL_FIRMA=/claves/nullcell-movil.jks \
+  -e NULLCELL_FIRMA_CLAVE="$(cat "$CLAVES/clave.txt")" \
   -e JAVA_HOME=/cadena/jdk \
   -e ANDROID_HOME=/cadena/android-sdk -e ANDROID_SDK_ROOT=/cadena/android-sdk \
   -e GRADLE_USER_HOME=/proyecto/.cadena/gradle-home \

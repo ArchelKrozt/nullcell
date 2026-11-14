@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import net.nullcell.movil.ui.C
+import net.nullcell.movil.ui.DialogoActualizacion
 import net.nullcell.movil.ui.PantallaAjustes
 import net.nullcell.movil.ui.PantallaBuscar
 import net.nullcell.movil.ui.PantallaInicio
@@ -62,6 +63,7 @@ class MainActivity : ComponentActivity() {
         pedirNotificaciones()
         NodoService.iniciar(this)
         Nodo.arrancar()
+        Actualizador.alArrancar()
         invitacion = invitacionDe(intent)
         setContent { TemaNullcell { App() } }
     }
@@ -135,5 +137,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        DialogoActualizacion()
     }
 }

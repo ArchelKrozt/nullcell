@@ -137,19 +137,30 @@ private fun Cabecera(e: Estado) {
 
 @Composable
 private fun TarjetaRed(e: Estado, reintentar: () -> Unit) {
-    Tarjeta(acento = if (e.anonimo) C.verde else C.magenta, relleno = 18.dp) {
+    Tarjeta(acento = if (e.anonimo) C.verde else if (e.rutasListas) C.cian else C.ambar, relleno = 18.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Anillo(
                 progreso = e.operadores / 3f,
-                color = if (e.anonimo) C.verde else C.magenta,
+                color = if (e.anonimo) C.verde else C.ambar,
                 modifier = Modifier.size(118.dp),
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     if (e.fase == Fase.ARRANCANDO) {
                         CircularProgressIndicator(Modifier.size(28.dp), color = C.cian, strokeWidth = 3.dp)
                     } else {
-                        Text("${minOf(e.operadores, 3)}/3", fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = Mono, color = C.texto)
-                        Text("operadores", style = MaterialTheme.typography.labelSmall, color = C.tenue)
+                        // Lo grande es si navegas; el anillo, cuánto falta para el anonimato.
+                        // Con un solo operador ya se navega: «1/3» no es un requisito.
+                        val (grande, col) = when {
+                            e.anonimo -> "Anónimo" to C.verde
+                            e.rutasListas -> "Conectado" to C.verde
+                            else -> "Buscando" to C.ambar
+                        }
+                        Text(grande, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = col)
+                        Text(
+                            "${e.operadores} operador${if (e.operadores == 1) "" else "es"}",
+                            style = MaterialTheme.typography.labelSmall, color = C.texto,
+                        )
+                        if (!e.anonimo) Text("anonimato ${minOf(e.operadores, 3)}/3", style = MaterialTheme.typography.labelSmall, color = C.tenue)
                     }
                 }
             }
@@ -172,7 +183,7 @@ private fun TarjetaRed(e: Estado, reintentar: () -> Unit) {
                     when {
                         e.fase == Fase.ERROR -> e.error ?: "Error desconocido"
                         e.anonimo -> "3 saltos por operadores distintos: nadie en el camino sabe a la vez quién eres y adónde vas."
-                        e.rutasListas -> "Todo va cifrado de extremo a extremo. El anonimato se activa solo al haber 3 operadores en la red."
+                        e.rutasListas -> "Ya puedes navegar: con un operador basta. Va cifrado de extremo a extremo; el anonimato se enciende solo cuando la red tenga 3 operadores."
                         else -> e.porQueNo ?: "Entrando a la red por tus semillas."
                     },
                     style = MaterialTheme.typography.bodySmall, color = C.tenue,
