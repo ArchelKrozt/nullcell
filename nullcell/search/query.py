@@ -126,8 +126,9 @@ class Search:
                 if known is None:
                     by_nid[hit.nid] = hit
                 else:
+                    # Mismo portal hallado por su nombre: sube la relevancia,
+                    # pero no es «otra celda que lo confirma» —es la misma—.
                     known.bm25 = max(known.bm25, hit.bm25)
-                    known.confirmed += 1
                 progress.results = len(by_nid)
 
         progress.done = True
