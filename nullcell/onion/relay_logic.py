@@ -102,6 +102,11 @@ class RelayService:
         #: stream logic of M5 plugs into; today nothing consumes ``DATA``.
         self.on_relay_message: Callable[[CircuitLeg, RelayHeader], None] | None = None
         self.legs: dict[tuple[int, int], CircuitLeg] = {}
+        #: A quién avisar cuando un tramo muere (punto de enlace, de encuentro).
+        #: Sin esto, el punto de enlace seguía «sirviendo» a un portal cuyo
+        #: circuito ya no existía: reenviaba presentaciones al vacío, le decía
+        #: al visitante «recibido» y éste esperaba 30 s una respuesta imposible.
+        self.on_leg_closed: list[Callable[[CircuitLeg], None]] = []
         self.draining = False
         self.stats = {"created": 0, "extended": 0, "forwarded": 0, "refused": 0, "padding": 0}
 
@@ -113,6 +118,15 @@ class RelayService:
         relay does not yet know about (a fresh ``CREATE``) reach us.
         """
         link.on_frame = lambda circ_id, cmd, payload: self._on_frame(link, circ_id, cmd, payload)
+        # Si el enlace muere, los tramos que van por él también.
+        link_closed = getattr(link, "closed", None)
+        if isinstance(link_closed, asyncio.Future):
+            link_closed.add_done_callback(lambda _f: self._link_gone(link))
+
+    def _link_gone(self, link: FrameProtocol) -> None:
+        for key, leg in list(self.legs.items()):
+            if leg.prev_link is link or leg.next_link is link:
+                self._destroy(key, "se cortó el enlace")
 
     def _key(self, link: FrameProtocol, circ_id: int) -> tuple[int, int]:
         return (id(link), circ_id)
@@ -285,6 +299,11 @@ class RelayService:
         if leg is None:
             return
         log.debug("circuit %08x torn down: %s", leg.prev_circ_id, reason)
+        for avisar in list(self.on_leg_closed):
+            try:
+                avisar(leg)
+            except Exception as exc:  # noqa: BLE001 - un aviso roto no impide cerrar
+                log.debug("aviso de tramo cerrado falló: %s", exc)
         for link, circ_id in (
             (leg.prev_link, leg.prev_circ_id),
             (leg.next_link, leg.next_circ_id),

@@ -79,6 +79,7 @@ def test_el_gestor_sobrevive_a_un_reinicio(tmp_path):
     assert copia.source == "tuya" and copia.note == "Raspberry de casa" and copia.verified
 
 
+@pytest.mark.semilla_real
 def test_la_semilla_del_programa_entra_como_incluida(tmp_path):
     from nullcell.discovery.bootstrap import load_bootstrap
 
@@ -119,7 +120,7 @@ async def test_una_semilla_viaja_de_un_usuario_a_otro_por_el_relevo(tmp_path, mo
         ana.seeds.add(semilla_rpi, source="tuya", note="Raspberry")
         await ana.node.bootstrap(ana.seed_nodes())
         assert await ana.verify_seeds() >= 2
-        assert await ana.node.exchange_seeds(relevo.seeds and _nodo(relevo, ep_relevo)) >= 0
+        assert await ana.node.exchange_seeds(_nodo(relevo, ep_relevo)) >= 0
 
         # El relevo la recibió sin verificar y la comprueba él mismo.
         for _ in range(100):

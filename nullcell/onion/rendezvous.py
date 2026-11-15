@@ -142,4 +142,8 @@ def install(relay: RelayService, identity, *, dht=None) -> tuple:
         log.debug("unhandled relay cmd %s", header.rcmd)
 
     relay.on_relay_message = dispatch
+    hooks = getattr(relay, "on_leg_closed", None)
+    if isinstance(hooks, list):
+        hooks.append(intro.forget)
+        hooks.append(rendezvous.forget)
     return intro, rendezvous

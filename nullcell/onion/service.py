@@ -311,6 +311,14 @@ class HiddenService:
     async def close(self) -> None:
         for session in self.sessions:
             session.close()
+            # Derribar su circuito: así el visitante se entera en el acto y
+            # vuelve a entrar por las puertas nuevas. Si sólo se marcaba
+            # cerrada, su lado seguía vivo, pedía la página por ella y nadie
+            # contestaba: esperaba 45 s y la carga fallaba.
+            circuit = getattr(session, "circuit", None)
+            if circuit is not None:
+                with contextlib.suppress(Exception):
+                    circuit.destroy()
         self.sessions.clear()
         # Derribarlos, no sólo olvidarlos: seguían abiertos (y mantenidos vivos
         # por el keepalive del enlace) tras cada republicación del portal.

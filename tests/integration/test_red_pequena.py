@@ -203,6 +203,7 @@ def test_con_tres_operadores_veteranos_vuelven_el_suelo_y_el_anonimato():
     assert paths.anonymous is True
 
 
+@pytest.mark.semilla_real
 def test_la_semilla_del_proyecto_viene_dentro_del_paquete():
     """`pip install .` no copia la raíz del repo: la semilla tiene que ir en el paquete."""
     from nullcell.discovery.bootstrap import load_bootstrap
@@ -301,3 +302,54 @@ async def test_republicar_no_deja_circuitos_de_enlace_huerfanos(tmp_path, monkey
         viejos = list(panel._service.intro_circuits.values())  # noqa: SLF001
         await asyncio.wait_for(panel.publish_folder(sitio), 60)
         assert all(c.closed for c in viejos), "los circuitos de la publicación anterior se cierran"
+
+
+async def test_quien_ya_navegaba_sigue_entrando_cuando_el_portal_cambia_de_puertas(
+    tmp_path, monkeypatch
+):
+    """El caso real del segundo relevo: el portal deja la vía directa y se
+    republica con puntos de enlace en el relevo nuevo. Un teléfono que ya lo
+    tenía abierto guardaba la sesión vieja y el descriptor viejo («entra por
+    el servidor»): la página no cargaba y había que cerrar la app."""
+    import types
+
+    from nullcell.cli.runtime import Runtime
+    from nullcell.desktop.fetcher import NullFetcher
+    from nullcell.desktop.node_thread import NodeThread
+    from nullcell.gateway import control as control_mod
+
+    async with red_de_un_relevo(tmp_path, monkeypatch) as (host, panel, cliente, sitio, ca, ep):
+        await asyncio.wait_for(panel.publish_folder(sitio), 60)
+        assert panel.portal["direct"] is True
+        await entrar(cliente, ep, host.identity.public_key)
+
+        nodo = types.SimpleNamespace(runtime=cliente)
+        fetcher = NullFetcher(lambda bare: NodeThread.open_session(nodo, bare))
+        primera = await asyncio.wait_for(fetcher.fetch(host.identity.hostname, "/"), 60)
+        assert primera.status == 200
+
+        # Llega un segundo relevo y el portal deja la vía directa.
+        puerto2 = _free_port()
+        ep2 = f"127.0.0.1:{puerto2}"
+        relevo2 = Runtime.assemble(
+            Identity.generate(), tmp_path / "r2", endpoints=[ep2], hops="auto"
+        )
+        await relevo2.listen("127.0.0.1", puerto2)
+        await relevo2.node.bootstrap([Node(pub=host.identity.public_key, endpoints=[ep])])
+        await relevo2.publisher.publish_relay([ep2])
+        try:
+            await host.learn_relays()
+            assert host.paths.ready
+            monkeypatch.setattr(control_mod, "DIRECT_RETRY", 0)
+            await asyncio.wait_for(panel.reconcile(), 60)
+            assert panel.portal["state"] == "en línea"
+            assert panel.portal["direct"] is False, (
+                "el portal debía pasar a los puntos del relevo nuevo"
+            )
+
+            # El cliente pide la página otra vez, con lo que tenía guardado.
+            segunda = await asyncio.wait_for(fetcher.fetch(host.identity.hostname, "/"), 60)
+            assert segunda.status == 200 and segunda.body == PAGE
+        finally:
+            await fetcher.close()
+            await relevo2.close()

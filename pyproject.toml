@@ -65,7 +65,10 @@ nullcell = [
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["slow: milestone-scale tests (the 30-cell mesh of §13)"]
+markers = [
+    "slow: milestone-scale tests (the 30-cell mesh of §13)",
+    "semilla_real: usa la semilla real incluida (sin conectarse a ella)",
+]
 
 [tool.ruff]
 line-length = 100

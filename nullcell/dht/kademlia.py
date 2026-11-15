@@ -181,11 +181,21 @@ class KademliaNode:
             return {}
         return {"pub": self.identity.public_key, "ep": list(self.endpoints)}
 
+    @property
+    def _public(self) -> bool:
+        """Esta celda se anuncia en una dirección que no es loopback."""
+        return any(not _loopback(e) for e in (self.endpoints or []))
+
     def _learn(self, message: dict[str, Any]) -> None:
         """Note the sender, if it told us how to reach it."""
         pub, endpoints = message.get("pub"), message.get("ep")
         if isinstance(pub, bytes) and len(pub) == 32 and isinstance(endpoints, list):
             clean = [e for e in endpoints if isinstance(e, str)][:4]
+            if self._public:
+                # Desde otra máquina nadie alcanza el loopback de quien habla:
+                # una celda pública que aprendiera «127.0.0.1» la repartiría
+                # como contacto inservible (o, en un teléfono, ¡su propio puerto!).
+                clean = [e for e in clean if not _loopback(e)]
             if clean:
                 self.table.add(Node(pub=pub, endpoints=clean))
 
@@ -494,3 +504,8 @@ class KademliaNode:
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<KademliaNode {self.identity.short} {len(self.table)} peers {self.store!r}>"
+
+
+def _loopback(endpoint: str) -> bool:
+    host = endpoint.rsplit(":", 1)[0].strip("[]").lower()
+    return host in ("localhost", "::1") or host.startswith("127.")
