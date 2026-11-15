@@ -38,6 +38,21 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
+import net.nullcell.movil.Favorito
+import net.nullcell.movil.Favoritos
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -76,6 +91,7 @@ fun aUrl(destino: String): String {
     return "https://${host.trimEnd('/')}/"
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PantallaNavegador(
     destino: String?,
@@ -91,6 +107,27 @@ fun PantallaNavegador(
     var puedeAtras by remember { mutableStateOf(false) }
     var puedeAdelante by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var titulo by remember { mutableStateOf("") }
+    var verFavoritos by remember { mutableStateOf(false) }
+    var guardando by remember { mutableStateOf(false) }
+    val favoritos by Favoritos.lista.collectAsStateWithLifecycle()
+    val alcance = rememberCoroutineScope()
+    val host = Uri.parse(url).host.orEmpty()
+    val ruta = Uri.parse(url).let { u -> (u.encodedPath ?: "/").ifBlank { "/" } + (u.encodedQuery?.let { "?$it" } ?: "") }
+    val actual: Favorito? = remember(url, favoritos) { if (host.isBlank()) null else Favoritos.buscar(host, ruta) }
+    val alternarFavorito: () -> Unit = {
+        val f = actual
+        if (f != null) { Favoritos.quitar(f); avisar("Quitado de favoritos") }
+        else if (host.isNotBlank() && !guardando) {
+            guardando = true
+            alcance.launch {
+                Favoritos.guardar(host, ruta, titulo)
+                    .onSuccess { avisar("Guardado con su dirección real: ${corto(it.direccion)}.null") }
+                    .onFailure { avisar(it.message ?: "No se pudo guardar") }
+                guardando = false
+            }
+        }
+    }
     val portapapeles = LocalClipboardManager.current
     val foco = LocalFocusManager.current
 
@@ -132,12 +169,18 @@ fun PantallaNavegador(
                     )
                 }
             }
+            if (host.isNotBlank()) IconButton(onClick = alternarFavorito, enabled = !guardando) {
+                Icon(if (actual != null) Icons.Filled.Star else Icons.Filled.StarBorder, "Favorito",
+                    tint = if (actual != null) C.ambar else C.texto)
+            }
             IconButton(onClick = { web?.reload() }) { Icon(Icons.Filled.Refresh, "Recargar") }
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Más") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, containerColor = C.superficie2) {
                     DropdownMenuItem(text = { Text("Adelante") }, enabled = puedeAdelante,
                         leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, null) }, onClick = { menu = false; web?.goForward() })
+                    DropdownMenuItem(text = { Text("Favoritos (${favoritos.size})") }, leadingIcon = { Icon(Icons.Filled.Bookmarks, null) },
+                        onClick = { menu = false; verFavoritos = true })
                     DropdownMenuItem(text = { Text("Ir a nullcell.null") }, leadingIcon = { Icon(Icons.Filled.Home, null) },
                         onClick = { menu = false; web?.loadUrl(aUrl("nullcell.null")) })
                     DropdownMenuItem(text = { Text("Copiar dirección") }, leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
@@ -163,13 +206,55 @@ fun PantallaNavegador(
                         )
                         w.webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView, p: Int) { progreso = p }
+                            override fun onReceivedTitle(view: WebView, t: String?) { titulo = t.orEmpty() }
                         }
                         web = w
                     }
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-            if (url.isBlank() && destino == null) Bienvenida { web?.loadUrl(aUrl("nullcell.null")) }
+            if (url.isBlank() && destino == null) Bienvenida(favoritos, { web?.loadUrl(it) }) { web?.loadUrl(aUrl("nullcell.null")) }
+        }
+    }
+
+    if (verFavoritos) {
+        ModalBottomSheet({ verFavoritos = false }, containerColor = C.superficie2) {
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+                Text("Favoritos", style = MaterialTheme.typography.titleMedium, color = C.texto, modifier = Modifier.padding(start = 4.dp))
+                Text(
+                    "Se guarda la dirección real de cada portal (su clave), no el nombre: un nombre puede cambiar de dueño, la dirección no.",
+                    style = MaterialTheme.typography.labelSmall, color = C.tenue, modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 8.dp),
+                )
+                ListaFavoritos(favoritos, { verFavoritos = false; web?.loadUrl(it.url) }) { Favoritos.quitar(it); avisar("Quitado de favoritos") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ListaFavoritos(lista: List<Favorito>, abrir: (Favorito) -> Unit, quitar: ((Favorito) -> Unit)?) {
+    if (lista.isEmpty()) {
+        Text("Todavía no guardaste ninguno. Toca la estrella ☆ en la barra de dirección.",
+            style = MaterialTheme.typography.bodySmall, color = C.tenue, modifier = Modifier.padding(8.dp))
+        return
+    }
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        items(lista, key = { it.clave }) { f ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { abrir(f) }.padding(horizontal = 8.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Star, null, tint = C.ambar, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(f.titulo, color = C.texto, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${corto(f.direccion)}.null${if (f.ruta != "/") f.ruta else ""}" + (f.nombre?.let { " · era $it.null" } ?: ""),
+                        color = C.tenue, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (quitar != null) IconButton(onClick = { quitar(f) }) { Icon(Icons.Filled.Delete, "Quitar", tint = C.tenue) }
+            }
         }
     }
 }
@@ -187,6 +272,12 @@ private fun configurar(w: WebView) {
         cacheMode = WebSettings.LOAD_NO_CACHE
         setGeolocationEnabled(false)
         userAgentString = "Mozilla/5.0 (Nullcell; Android) Nullcell/0.1"   // igual para todos: no distingue a nadie
+        // Zoom con dos dedos, como cualquier navegador; sin los botones +/− encima.
+        setSupportZoom(true)
+        builtInZoomControls = true
+        displayZoomControls = false
+        useWideViewPort = true
+        loadWithOverviewMode = true
     }
     CookieManager.getInstance().setAcceptThirdPartyCookies(w, false)
 }
@@ -228,7 +319,7 @@ private class ClienteNull(val alCambiar: (String) -> Unit) : WebViewClient() {
 }
 
 @Composable
-private fun Bienvenida(ir: () -> Unit) {
+private fun Bienvenida(favoritos: List<Favorito>, abrirUrl: (String) -> Unit, ir: () -> Unit) {
     Column(Modifier.fillMaxSize().background(C.fondo).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(60.dp))
         Box(Modifier.size(72.dp).clip(RoundedCornerShape(22.dp)).background(C.cian.copy(alpha = .14f)), contentAlignment = Alignment.Center) {
@@ -246,5 +337,11 @@ private fun Bienvenida(ir: () -> Unit) {
             "Abrir nullcell.null",
             color = C.fondo, modifier = Modifier.clip(RoundedCornerShape(50)).background(C.cian).clickable(onClick = ir).padding(horizontal = 22.dp, vertical = 12.dp),
         )
+        if (favoritos.isNotEmpty()) {
+            Spacer(Modifier.height(28.dp))
+            Text("Tus favoritos", style = MaterialTheme.typography.titleMedium, color = C.texto, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            ListaFavoritos(favoritos.take(8), { abrirUrl(it.url) }, null)
+        }
     }
 }

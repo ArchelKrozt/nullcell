@@ -328,17 +328,36 @@ class NodeThread:
         from nullcell.onion.service import connect_to_service
 
         runtime = self.runtime
-        found = await runtime.resolver.resolve(bare_nid)
-        intro = found.intro_points[0]
-        return await connect_to_service(
-            runtime.circuits,
-            service_pub=found.pub,
-            service_x25519=found.x25519,
-            intro_point=intro,
-            rendezvous_path=runtime.paths.build(),
-            intro_path=runtime.paths.build(ending_at=intro.as_hop()),
-            multiplexed=True,
-        )
+
+        async def conectar(fresh: bool):
+            found = await runtime.resolver.resolve(bare_nid, fresh=fresh)
+            intro = found.intro_points[0]
+            return await connect_to_service(
+                runtime.circuits,
+                service_pub=found.pub,
+                service_x25519=found.x25519,
+                intro_point=intro,
+                rendezvous_path=runtime.paths.build(),
+                intro_path=runtime.paths.build(ending_at=intro.as_hop()),
+                multiplexed=True,
+            )
+
+        try:
+            return await conectar(fresh=False)
+        except Exception as exc:  # noqa: BLE001
+            # El descriptor guardado puede ser de antes de que el portal se
+            # reiniciara: sus puntos de enlace ya no existen. Se pregunta a la
+            # red una vez antes de rendirse.
+            log.info("sesión con %s falló (%s): se resuelve de nuevo", bare_nid[:12], exc)
+            runtime.resolver.forget(bare_nid)
+            return await conectar(fresh=True)
+
+    async def real_address(self, host: str) -> str:
+        """La dirección de 56 caracteres detrás de un nombre (o la misma)."""
+        from nullcell.core import ids
+
+        found = await self.runtime.resolver.resolve(host)
+        return ids.encode_nid(found.pub)
 
     # -------------------------------------------------------- thread-safe ops
     def call(self, coroutine_factory, timeout: float = 30.0):

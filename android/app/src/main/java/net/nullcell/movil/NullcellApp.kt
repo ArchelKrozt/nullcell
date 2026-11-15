@@ -11,5 +11,6 @@ class NullcellApp : Application() {
         if (!Python.isStarted()) Python.start(AndroidPlatform(this))
         Nodo.init(this)
         Actualizador.init(this)
+        Favoritos.init(this)
     }
 }

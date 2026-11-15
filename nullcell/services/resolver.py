@@ -87,8 +87,15 @@ class Resolver:
         return len(self._aliases)
 
     # -------------------------------------------------------------- resolving
-    async def resolve(self, target: str, *, private: bool = False) -> ServiceDescriptor:
-        """Resolve a name or address to a descriptor with intro points."""
+    async def resolve(
+        self, target: str, *, private: bool = False, fresh: bool = False
+    ) -> ServiceDescriptor:
+        """Resolve a name or address to a descriptor with intro points.
+
+        ``fresh`` salta las dos cachés (la del resolutor y la del DHT local) y
+        pregunta a la red: después de que un portal se reinicia, sus puntos de
+        enlace cambian y el descriptor guardado lleva a puertas cerradas.
+        """
         bare = ids.parse_hostname(target)
         if not bare:
             raise ResolveError("empty name")
@@ -99,11 +106,11 @@ class Resolver:
 
         bare = self._aliases.get(bare, bare)
         cached = self._cache.get(bare)
-        if cached is not None and time.monotonic() - cached[0] < self.cache_ttl:
+        if not fresh and cached is not None and time.monotonic() - cached[0] < self.cache_ttl:
             return cached[1]
 
         pub = await self._key_for(bare)
-        descriptor = await self._descriptor_for(pub, private=private)
+        descriptor = await self._descriptor_for(pub, private=private, fresh=fresh)
         self._cache[bare] = (time.monotonic(), descriptor)
         return descriptor
 
@@ -121,11 +128,14 @@ class Resolver:
         # taking the freshest is the right tie-break if several ever appear.
         return max(found, key=lambda record: record.ts).pub
 
-    async def _descriptor_for(self, pub: bytes, *, private: bool) -> ServiceDescriptor:
+    async def _descriptor_for(
+        self, pub: bytes, *, private: bool, fresh: bool = False
+    ) -> ServiceDescriptor:
         if private:
             return await self._private_descriptor(pub)
 
-        found = await self.dht.find_value(ids.routing_key(pub), want=RecordType.SERVICE)
+        extra = {"fresh": True} if fresh else {}
+        found = await self.dht.find_value(ids.routing_key(pub), want=RecordType.SERVICE, **extra)
         for record in sorted(found, key=lambda r: r.ts, reverse=True):
             if record.type is not RecordType.SERVICE:
                 continue

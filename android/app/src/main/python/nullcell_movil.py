@@ -80,6 +80,22 @@ def detener() -> None:
         _nodo, _fetcher = None, None
 
 
+def direccion_real(host: str) -> str:
+    """`nullcell.null` → la dirección de 56 caracteres que de verdad es el portal.
+
+    Un nombre es un registro en el DHT que el primero en llegar se queda; la
+    dirección es la clave del portal y no se puede suplantar. Los favoritos
+    guardan ésta. Devuelve "" si no se puede resolver.
+    """
+    if _nodo is None or not _nodo.running:
+        return ""
+    try:
+        return _nodo.call(lambda: _nodo.real_address(host), timeout=60)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("no se pudo resolver %s: %s", host, exc)
+        return ""
+
+
 def cargar(url: str, metodo: str = "GET") -> dict:
     """Una página de un portal `.null`: estado, tipo, cabeceras y cuerpo."""
     global _fetcher

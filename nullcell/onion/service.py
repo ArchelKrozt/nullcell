@@ -135,6 +135,9 @@ class Session:
         self.on_data: Callable[[bytes], None] | None = None
         self.received: list[bytes] = []
         self.closed = False
+        on_close = getattr(circuit, "on_close", None)
+        if isinstance(on_close, list):
+            on_close.append(lambda _reason: self.close())
 
     async def send(self, data: bytes) -> None:
         if self.closed:

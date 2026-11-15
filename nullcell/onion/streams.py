@@ -108,6 +108,11 @@ class MultiplexedSession:
         #: exactly what a browser does.
         self._cipher_lock = asyncio.Lock()
         circuit.on_data = self._on_relay
+        # Si el circuito muere, la sesión con él: los streams abiertos reciben
+        # fin en vez de esperar 45 s, y quien guarda la sesión ve `closed`.
+        on_close = getattr(circuit, "on_close", None)
+        if isinstance(on_close, list):
+            on_close.append(lambda _reason: self.close())
 
     # ------------------------------------------------------------------ opening
     def _alloc(self) -> int:

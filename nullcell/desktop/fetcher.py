@@ -14,6 +14,7 @@ So one session per address, shared, with one stream per request.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -58,7 +59,7 @@ class NullFetcher:
         lock = self._locks.setdefault(bare, asyncio.Lock())
         async with lock:
             session = self._sessions.get(bare)
-            if session is not None and not getattr(session, "closed", False):
+            if session is not None and not _dead(session):
                 return session
             session = await self.open_session(bare)
             self._sessions[bare] = session
@@ -71,7 +72,38 @@ class NullFetcher:
             raise ValueError(f"{host!r} no es una dirección .null válida")
 
         self.stats["requests"] += 1
-        session = await self._session_for(bare)
+        # Una sesión guardada puede haber muerto sin avisar (el teléfono se
+        # durmió, cambió de red, el portal reinició). Si la petición falla, se
+        # olvida y se prueba una vez con una sesión nueva antes de rendirse:
+        # antes la sesión muerta se reutilizaba para siempre.
+        for intento in (1, 2):
+            session = await self._session_for(bare)
+            try:
+                return await self._fetch_on(session, bare, path, method)
+            except Exception as exc:
+                self._forget(bare, session)
+                if intento == 2:
+                    self.stats["failed"] += 1
+                    raise
+                log.info("sesión con %s caída (%s): se abre otra", ids.short(bare), exc)
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    def _forget(self, bare: str, session: Any) -> None:
+        if self._sessions.get(bare) is session:
+            del self._sessions[bare]
+        close = getattr(session, "close", None)
+        if close is not None:
+            with contextlib.suppress(Exception):
+                result = close()
+                if asyncio.iscoroutine(result):
+                    result.close()
+        # Cerrar la sesión no suelta su circuito: si sigue vivo, se derriba.
+        circuit = getattr(session, "circuit", None)
+        if circuit is not None and not getattr(circuit, "closed", True):
+            with contextlib.suppress(Exception):
+                circuit.destroy()
+
+    async def _fetch_on(self, session: Any, bare: str, path: str, method: str) -> Fetched:
         stream = await session.open()
         try:
             request = (
@@ -131,6 +163,14 @@ class NullFetcher:
             if asyncio.iscoroutine(result):
                 await result
         self._sessions.clear()
+
+
+def _dead(session: Any) -> bool:
+    """Cerrada, o su circuito ya no existe."""
+    if getattr(session, "closed", False):
+        return True
+    circuit = getattr(session, "circuit", None)
+    return bool(getattr(circuit, "closed", False))
 
 
 async def _quietly_close(stream: Any) -> None:

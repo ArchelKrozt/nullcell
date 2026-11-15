@@ -111,7 +111,19 @@ class Circuit:
         self._pending: dict[int, asyncio.Future[bytes]] = {}
         self._handshakes: list[Initiator] = []
         self.on_data: object = None  # Callable[[int, int, bytes], None]
+        #: Avisos de cierre (con el motivo), para quien vive encima: sesiones.
+        self.on_close: list = []
         link.route(self.circ_id, self._on_frame)
+        # Un circuito no sobrevive a su enlace. Antes no se enteraba: cuando la
+        # conexión QUIC moría (el teléfono dormido más de un minuto, el paso de
+        # wifi a datos) el circuito seguía «listo», y todo lo que lo guardaba
+        # —sesiones de portal, el DHT por circuitos, el chat— esperaba sobre un
+        # cadáver hasta agotar el tiempo. Sólo reiniciar la app lo arreglaba.
+        link_closed = getattr(link, "closed", None)
+        if isinstance(link_closed, asyncio.Future):
+            link_closed.add_done_callback(
+                lambda _f: self._tear_down("se cortó el enlace con el primer salto")
+            )
 
     # ------------------------------------------------------------------ status
     def __len__(self) -> int:
@@ -331,6 +343,11 @@ class Circuit:
                 future.set_exception(CircuitError(reason))
         self._pending.clear()
         self.link.unroute(self.circ_id)
+        for avisar in list(self.on_close):
+            try:
+                avisar(reason)
+            except Exception as exc:  # noqa: BLE001 - un aviso roto no impide cerrar
+                log.debug("aviso de cierre falló: %s", exc)
 
     def destroy(self) -> None:
         """Tear the circuit down and tell the guard."""
