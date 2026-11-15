@@ -312,6 +312,11 @@ class HiddenService:
         for session in self.sessions:
             session.close()
         self.sessions.clear()
+        # Derribarlos, no sólo olvidarlos: seguían abiertos (y mantenidos vivos
+        # por el keepalive del enlace) tras cada republicación del portal.
+        for circuit in self.intro_circuits.values():
+            with contextlib.suppress(Exception):
+                circuit.destroy()
         self.intro_circuits.clear()
         self.intro_points.clear()
 

@@ -78,6 +78,12 @@ def _clean_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def intro_caidos(service: Any) -> int:
+    """Cuántos circuitos de punto de enlace de un servicio ya no existen."""
+    circuitos = getattr(service, "intro_circuits", None) or {}
+    return sum(1 for c in circuitos.values() if getattr(c, "closed", False))
+
+
 class ControlError(Exception):
     """An action was refused. The message is shown to the operator."""
 
@@ -111,6 +117,7 @@ class ControlPanel:
         self.on_chat: Any = None
         self._chat_identity: Any = None
         self._chat_service_obj: Any = None
+        self._portal_static: Any = None
 
     # -------------------------------------------------------------- memoria
     def remember(self) -> None:
@@ -488,6 +495,11 @@ class ControlPanel:
             with contextlib.suppress(Exception):
                 await self._site.close()
             self._site = None
+        if self._service is not None:
+            # Soltar también sus circuitos de enlace: si no, quedaban abiertos
+            # (y mantenidos vivos) para siempre tras cada republicación.
+            with contextlib.suppress(Exception):
+                await self._service.close()
         self._service = None
         self.portal = None
         if save:
@@ -523,6 +535,15 @@ class ControlPanel:
             with contextlib.suppress(Exception):
                 self.runtime.go_anonymous()
 
+        if self._chat_service_obj is not None and intro_caidos(self._chat_service_obj):
+            # El chat dejó de ser alcanzable: se rehace su servicio y la
+            # siguiente línea vuelve a anunciar la presencia con las puertas nuevas.
+            log.info("el chat perdió un punto de enlace: se rehace")
+            with contextlib.suppress(Exception):
+                await self._chat_service_obj.close()
+            self._chat_service_obj = None
+            if self.chat is not None:
+                self.chat.service = None
         if self.chat is not None and self._chat_service_obj is None:
             with contextlib.suppress(Exception):
                 await self._chat_service()
@@ -530,6 +551,19 @@ class ControlPanel:
         if self.portal is None:
             return
         if self.portal["state"] == "en línea":
+            if self._service is not None and (caidos := intro_caidos(self._service)):
+                # Un punto de enlace sólo sirve mientras su circuito vive: si
+                # cae, el relevo olvida el portal y contesta «unknown service»
+                # a todo el que llegue con el descriptor publicado. Antes nadie
+                # lo miraba y el portal quedaba inalcanzable hasta reiniciarlo.
+                log.warning(
+                    "el portal perdió %d punto(s) de enlace: se rehacen y se republica", caidos
+                )
+                folder, name = self.portal["folder"], self.portal.get("name")
+                await self.publish_folder(
+                    folder, name=name, save=False, meta=self.portal.get("meta")
+                )
+                return
             await self._maybe_leave_direct()
             return
         if not self.runtime.paths.ready and not self._can_serve_alone():
@@ -549,7 +583,21 @@ class ControlPanel:
         from nullcell.services.descriptor import ServiceDescriptor
 
         root = Path(self.portal["folder"])
-        service = HiddenService(self.runtime.identity, self.runtime.circuits, multiplexed=True)
+        # La misma clave de cifrado en cada republicación: el descriptor que ya
+        # tienen guardado los visitantes sigue sirviendo. Con una clave nueva
+        # cada vez (y el portal se republica solo, p. ej. cada 10 min al
+        # intentar dejar la vía directa), sus presentaciones llegaban cifradas
+        # para una clave que ya no existía y no podían entrar.
+        if self._portal_static is None:
+            from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+            self._portal_static = X25519PrivateKey.generate()
+        service = HiddenService(
+            self.runtime.identity,
+            self.runtime.circuits,
+            multiplexed=True,
+            static=self._portal_static,
+        )
         site = SiteHost(static_app(root))
         await site.start()
         # Per *session*, not per service: every rendezvous gets its own

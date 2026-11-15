@@ -13,8 +13,8 @@ android {
         applicationId = "net.nullcell.movil"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.3.0"
+        versionCode = 6
+        versionName = "0.3.1"
         // Teléfonos de los últimos ~8 años. Cada ABI añade ~25 MB de Python.
         ndk { abiFilters += listOf("arm64-v8a") }
     }

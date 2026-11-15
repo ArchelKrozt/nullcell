@@ -249,3 +249,55 @@ async def test_un_relevo_que_no_contesta_no_deja_el_portal_en_local(tmp_path, mo
     finally:
         await panel.unpublish(save=False)
         await host.close()
+
+
+async def test_si_cae_el_punto_de_enlace_el_portal_se_rehace_solo(tmp_path, monkeypatch):
+    """El caso real: «no se pudo abrir el portal · hop reported TRUNCATED».
+
+    El circuito del punto de enlace se cortó; el relevo olvidó el portal y
+    contestaba «unknown service» a todos, mientras el portal seguía «en
+    línea» publicando esa puerta. Nadie lo miraba: hacía falta reiniciarlo.
+    """
+    async with red_de_un_relevo(tmp_path, monkeypatch) as (host, panel, cliente, sitio, ca, ep):
+        await asyncio.wait_for(panel.publish_folder(sitio), 60)
+        clave_antes = panel._service.x25519_public  # noqa: SLF001
+        viejos = list(panel._service.intro_circuits.values())  # noqa: SLF001
+        assert viejos
+
+        for circuito in viejos:  # se cortan, como al morir su enlace
+            circuito._tear_down("prueba: enlace caído")  # noqa: SLF001
+        await asyncio.wait_for(panel.reconcile(), 60)
+
+        assert panel.portal["state"] == "en línea"
+        nuevos = list(panel._service.intro_circuits.values())  # noqa: SLF001
+        assert nuevos and all(not c.closed for c in nuevos)
+        # La misma clave: lo que los visitantes tenían guardado sigue valiendo.
+        assert panel._service.x25519_public == clave_antes  # noqa: SLF001
+
+        # Y un visitante entra de verdad.
+        await entrar(cliente, ep, host.identity.public_key)
+        encontrado = await cliente.resolver.resolve(host.identity.hostname, fresh=True)
+        punto = encontrado.intro_points[0]
+        sesion = await connect_to_service(
+            cliente.circuits,
+            service_pub=encontrado.pub,
+            service_x25519=encontrado.x25519,
+            intro_point=punto,
+            rendezvous_path=cliente.paths.build(),
+            intro_path=cliente.paths.build(ending_at=punto.as_hop()),
+            multiplexed=True,
+        )
+        stream = await sesion.open()
+        await stream.write(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        respuesta = b""
+        while chunk := await asyncio.wait_for(stream.read(), 20):
+            respuesta += chunk
+        assert b"200" in respuesta.split(b"\r\n", 1)[0] and PAGE in respuesta
+
+
+async def test_republicar_no_deja_circuitos_de_enlace_huerfanos(tmp_path, monkeypatch):
+    async with red_de_un_relevo(tmp_path, monkeypatch) as (host, panel, cliente, sitio, ca, ep):
+        await asyncio.wait_for(panel.publish_folder(sitio), 60)
+        viejos = list(panel._service.intro_circuits.values())  # noqa: SLF001
+        await asyncio.wait_for(panel.publish_folder(sitio), 60)
+        assert all(c.closed for c in viejos), "los circuitos de la publicación anterior se cierran"
