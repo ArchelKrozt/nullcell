@@ -178,7 +178,7 @@ apps".
 |---|---|
 | **Home** | Live status, anonymity ring (operators / 3), lock, cells, relays, seeds, recent activity |
 | **Search** | The network's search engine (by name, word or tag), queried over circuits |
-| **Browse** | `.null` browser with address bar, lock, back/forward, reload, menu |
+| **Browse** | `.null` browser with address bar, lock, back/forward, reload, pinch zoom, and bookmarks that store the portal's **real address** (its 56-character key), not its name |
 | **Chat** | IRC-style chat over the network: remembered nickname, list of active channels or type one, who's connected, `/join` `/nick` `/part`, unread badge |
 | **Seeds** | Add (paste a line or a `nullcell://` invitation), remove, exchange now, share |
 | **Settings** | Your address, auto-anonymity status, updates, what the browser protects, disconnect |
@@ -189,6 +189,8 @@ apps".
   image, font or script from the internet is blocked, since it would leave straight from the phone
   and reveal your IP. No cache, no third-party cookies.
 - **The phone doesn't announce itself** or relay traffic: it only browses and shares seeds.
+- **It reconnects by itself.** If the phone sleeps or switches between wifi and mobile data,
+  dead circuits are noticed and rebuilt; a portal that restarted is looked up again.
 - **It updates itself.** On launch (at most every 6 h) it checks this repository's
   `android-v*` releases; if there's a newer one it asks, downloads it, **verifies the SHA-256
   published by GitHub and that the signature matches the installed app**, and opens Android's
@@ -532,7 +534,7 @@ escritorio. Nadie en el camino —tampoco el servidor del proyecto— ve qué po
 |---|---|
 | **Inicio** | Estado en vivo, anillo de anonimato (operadores / 3), candado, celdas, relevos, semillas, actividad |
 | **Buscar** | El buscador de la red (por nombre, palabra o etiqueta), consultado por circuitos |
-| **Navegar** | Navegador `.null` con barra de dirección, candado, atrás/adelante, recargar y menú |
+| **Navegar** | Navegador `.null` con barra de dirección, candado, atrás/adelante, recargar, zoom con dos dedos y favoritos que guardan la **dirección real** del portal (su clave de 56 caracteres), no el nombre |
 | **Chat** | Chat tipo IRC por la red: apodo recordado, lista de canales activos o escribir uno, quién está conectado, `/join` `/nick` `/part`, contador de no leídos |
 | **Semillas** | Añadir (pegar una línea o una invitación `nullcell://`), quitar, intercambiar ahora, compartir |
 | **Ajustes** | Tu dirección, estado del anonimato automático, actualizaciones, qué protege, desconectar |
@@ -543,6 +545,8 @@ escritorio. Nadie en el camino —tampoco el servidor del proyecto— ve qué po
   fuente o script de internet se bloquea, porque saldría directo del teléfono y delataría tu IP.
   Sin caché, sin cookies de terceros.
 - **El teléfono no se anuncia** ni presta ancho de banda: sólo navega y comparte semillas.
+- **Se reconecta sola.** Si el teléfono se duerme o pasa de wifi a datos, los circuitos muertos se
+  notan y se rehacen; un portal que se reinició se vuelve a buscar.
 - **Se actualiza sola.** Al abrirse (como mucho cada 6 h) mira las releases `android-v*` de este
   repositorio; si hay una más nueva, pregunta, la descarga, **comprueba la huella SHA-256 que
   publica GitHub y que la firma sea la misma que la de la app instalada**, y abre el instalador de
