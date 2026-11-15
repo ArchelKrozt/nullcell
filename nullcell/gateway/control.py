@@ -726,8 +726,14 @@ class ControlPanel:
         # Al cambiar de canal el servicio ya existe y `_chat_service` no hace
         # nada: sin esto el canal nuevo no se anunciaba y nadie te veía.
         self.chat.service = self._chat_service_obj
+        if self._chat_service_obj is not None:
+            # Anunciarse ya, y resolver el apodo, antes de contestar: si no, la
+            # respuesta llevaba el apodo sin el número y nadie te veía aún.
+            with contextlib.suppress(Exception):
+                await self.chat.refresh()
+        else:
+            await self._chat_service()  # la primera vez: crea el servicio y se anuncia
         self.chat.spawn(self.runtime)
-        await self._chat_service()
         return self.chat.describe()
 
     async def _chat_service(self) -> None:

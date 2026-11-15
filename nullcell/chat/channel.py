@@ -33,7 +33,14 @@ from collections.abc import Callable
 from typing import Any, Final
 
 from nullcell.chat import presence
-from nullcell.chat.protocol import MAX_NICK, Message, MessageError, channel_name, clean_nick
+from nullcell.chat.protocol import (
+    MAX_NICK,
+    MAX_TEXT,
+    Message,
+    MessageError,
+    channel_name,
+    clean_nick,
+)
 from nullcell.core.identity import Identity
 
 __all__ = ["HISTORY", "Channel"]
@@ -46,6 +53,64 @@ HISTORY: Final[int] = 300
 REFRESH: Final[float] = 60.0
 #: Un miembro que no acepta una sesión no se reintenta más seguido que esto.
 RETRY_AFTER: Final[float] = 120.0
+
+
+class Enlace:
+    """Una sesión con otro miembro, con mensajes enteros en vez de trozos.
+
+    El chat va sobre sesiones de rendezvous **multiplexadas**, que hablan en
+    *streams* y no tienen `send` ni `on_data`: el canal llamaba a
+    `session.send`, fallaba en silencio y descartaba la sesión, así que ningún
+    mensaje cruzaba. Y aun con una sesión simple, un mensaje largo llega en
+    varios trozos: cada uno se tomaba por un mensaje entero y se rechazaba.
+
+    Aquí cada mensaje va con su longitud delante (4 bytes) y se rearma al
+    llegar, sobre un stream propio en las multiplexadas.
+    """
+
+    MAX: Final[int] = MAX_TEXT * 8
+
+    def __init__(self, session: Any, entregar: Callable[[bytes], Any]) -> None:
+        self.session = session
+        self.entregar = entregar
+        self._stream: Any = None
+        self._buf = bytearray()
+        if hasattr(session, "open"):  # MultiplexedSession
+            session.on_stream = self._escuchar
+        else:
+            session.on_data = self._recibir
+
+    def _escuchar(self, stream: Any) -> None:
+        stream.on_data = self._recibir
+
+    def _recibir(self, data: bytes) -> None:
+        self._buf += bytes(data)
+        while len(self._buf) >= 4:
+            largo = int.from_bytes(self._buf[:4], "big")
+            if largo > self.MAX:
+                log.debug("mensaje de chat de %d bytes: se corta la sesión", largo)
+                self._buf.clear()
+                self.close()
+                return
+            if len(self._buf) < 4 + largo:
+                return
+            mensaje = bytes(self._buf[4 : 4 + largo])
+            del self._buf[: 4 + largo]
+            self.entregar(mensaje)
+
+    async def send(self, raw: bytes) -> None:
+        datos = len(raw).to_bytes(4, "big") + raw
+        if hasattr(self.session, "open"):
+            if self._stream is None or self._stream.closed:
+                self._stream = await self.session.open(b"chat")
+                self._stream.on_data = self._recibir
+            await self._stream.write(datos)
+        else:
+            await self.session.send(datos)
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self.session.close()
 
 
 class Channel:
@@ -82,6 +147,8 @@ class Channel:
         self._sessions: dict[bytes, Any] = {}
         self._last_try: dict[bytes, float] = {}
         self._tasks: list[asyncio.Task] = []
+        #: Sesiones que otros abrieron hacia esta celda: sólo se escucha por ellas.
+        self._entrantes: list[Enlace] = []
 
     # ---------------------------------------------------------- recepción
     def accept(self, raw: bytes) -> Message | None:
@@ -114,11 +181,7 @@ class Channel:
 
     def attach(self, session: Any) -> None:
         """Engancha una sesión entrante: lo que llegue por ella es del canal."""
-
-        def deliver(data: bytes) -> None:
-            self.accept(bytes(data))
-
-        session.on_data = deliver
+        self._entrantes.append(Enlace(session, self.accept))
 
     # ------------------------------------------------------------- envío
     async def say(self, text: str) -> Message:
@@ -219,14 +282,14 @@ class Channel:
             except Exception as exc:  # noqa: BLE001
                 log.debug("no se pudo abrir sesión con %s: %s", member.nick, exc)
                 continue
-            session.on_data = lambda data: self.accept(bytes(data))
-            self._sessions[member.pub] = session
+            self._sessions[member.pub] = Enlace(session, self.accept)
 
     async def run_forever(self, interval: float = REFRESH) -> None:
+        # La primera vuelta ya la hizo quien entró al canal.
         while True:
+            await asyncio.sleep(interval)
             with contextlib.suppress(Exception):
                 await self.refresh()
-            await asyncio.sleep(interval)
 
     def spawn(self, runtime: Any) -> None:
         self._tasks.append(runtime.spawn(self.run_forever()))
@@ -235,10 +298,11 @@ class Channel:
         for task in self._tasks:
             task.cancel()
         self._tasks.clear()
-        for session in self._sessions.values():
+        for session in [*self._sessions.values(), *self._entrantes]:
             with contextlib.suppress(Exception):
                 session.close()
         self._sessions.clear()
+        self._entrantes.clear()
 
     # --------------------------------------------------------------- vista
     def recent(self, limit: int = 100) -> list[dict[str, Any]]:

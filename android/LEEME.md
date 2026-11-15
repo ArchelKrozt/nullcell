@@ -13,6 +13,7 @@ Kotlin + Jetpack Compose.
 | **Inicio** | Estado en vivo, anillo de progreso hacia el anonimato (operadores / 3), candado 🔒 / ⚠, celdas, relevos, semillas, accesos rápidos y actividad del nodo |
 | **Buscar** | El buscador de la red (por nombre, palabra o etiqueta). Las consultas van por circuitos |
 | **Navegar** | Navegador de portales `.null` con barra de dirección, candado, atrás/adelante, recargar y menú |
+| **Chat** | Chat tipo IRC: apodo recordado, canales activos (directorio de la red) o escribir uno, personas conectadas, `/join #canal`, `/nick apodo`, `/part`, contador de no leídos y vuelta automática al último canal. Apodo repetido → `apodo2` |
 | **Semillas** | Gestor: añadir (hoja inferior, pegar línea o invitación `nullcell://`), quitar (con confirmación), intercambiar ahora, compartir la invitación |
 | **Ajustes** | Tu dirección, estado del anonimato automático, actualizaciones, qué protege el navegador, desconectar |
 

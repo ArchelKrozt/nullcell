@@ -179,6 +179,7 @@ apps".
 | **Home** | Live status, anonymity ring (operators / 3), lock, cells, relays, seeds, recent activity |
 | **Search** | The network's search engine (by name, word or tag), queried over circuits |
 | **Browse** | `.null` browser with address bar, lock, back/forward, reload, menu |
+| **Chat** | IRC-style chat over the network: remembered nickname, list of active channels or type one, who's connected, `/join` `/nick` `/part`, unread badge |
 | **Seeds** | Add (paste a line or a `nullcell://` invitation), remove, exchange now, share |
 | **Settings** | Your address, auto-anonymity status, updates, what the browser protects, disconnect |
 
@@ -268,9 +269,11 @@ carries TCP.
 
 ### IRC-style chat
 
-In the dashboard there is a chat: join a name, see who's there and what's said **while you're
-there**. Presence is a short-TTL DHT record under the channel key; after that there is **no
-server** — every member opens a rendezvous session with the others. Messages from before you joined
+In the dashboard and in the Android app there is a chat: join a name, see who's there and what's
+said **while you're there**. Presence is a short-TTL DHT record under the channel key, and a shared
+directory lists the channels that have people in them. After that there is **no server** — every
+member opens a rendezvous session with the others. Nicknames work like IRC: if yours is taken in a
+channel, you join as `nick2`, `nick3`… Messages from before you joined
 don't arrive, it scales to a group (not a crowd), being in a channel is public, and chat uses its
 own identity (`chat.key`) separate from your portal's. Every message is signed.
 
@@ -530,6 +533,7 @@ escritorio. Nadie en el camino —tampoco el servidor del proyecto— ve qué po
 | **Inicio** | Estado en vivo, anillo de anonimato (operadores / 3), candado, celdas, relevos, semillas, actividad |
 | **Buscar** | El buscador de la red (por nombre, palabra o etiqueta), consultado por circuitos |
 | **Navegar** | Navegador `.null` con barra de dirección, candado, atrás/adelante, recargar y menú |
+| **Chat** | Chat tipo IRC por la red: apodo recordado, lista de canales activos o escribir uno, quién está conectado, `/join` `/nick` `/part`, contador de no leídos |
 | **Semillas** | Añadir (pegar una línea o una invitación `nullcell://`), quitar, intercambiar ahora, compartir |
 | **Ajustes** | Tu dirección, estado del anonimato automático, actualizaciones, qué protege, desconectar |
 
@@ -621,9 +625,11 @@ Nullcell no usa Tor ni puede ir a través de él: va sobre **QUIC (UDP)** y Tor 
 
 ### Chat tipo IRC
 
-En el tablero hay un chat: entras a un nombre, ves quién está y lo que se dice **mientras estás**.
-La presencia es un registro de TTL corto en el DHT bajo la clave del canal; a partir de ahí **no
-hay servidor**: cada miembro abre una sesión de rendezvous con los demás. No llegan los mensajes de
+En el tablero y en la app de Android hay un chat: entras a un nombre, ves quién está y lo que se
+dice **mientras estás**. La presencia es un registro de TTL corto en el DHT bajo la clave del canal,
+y un directorio común lista los canales con gente dentro. A partir de ahí **no hay servidor**: cada
+miembro abre una sesión de rendezvous con los demás. Los apodos funcionan como en IRC: si el tuyo
+ya está en uso en el canal, entras como `apodo2`, `apodo3`… No llegan los mensajes de
 antes de entrar, escala a un grupo (no a una multitud), estar en un canal es público, y el chat usa
 una identidad propia (`chat.key`), distinta de la de tu portal. Cada mensaje va firmado.
 
