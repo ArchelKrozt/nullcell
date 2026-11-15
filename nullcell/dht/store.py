@@ -51,7 +51,10 @@ AGE_BONUS_HOURS: Final[float] = 24.0
 
 #: Only these types may have many entries under one key. A relay or service
 #: descriptor is keyed by its own routing key, so there is exactly one.
-_MULTI_VALUE: Final[frozenset[RecordType]] = frozenset({RecordType.KEYWORD})
+#: Claves con muchos publicadores a la vez. La presencia de chat estaba fuera:
+#: cada canal guardaba **sólo al primero** que entraba y rechazaba a los demás
+#: como si fuera un nombre, así que dos personas nunca se veían en un canal.
+_MULTI_VALUE: Final[frozenset[RecordType]] = frozenset({RecordType.KEYWORD, RecordType.PRESENCE})
 
 
 class StoreFull(Exception):

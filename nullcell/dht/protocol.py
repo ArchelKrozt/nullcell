@@ -22,7 +22,10 @@ from nullcell.dht.routing_table import Node
 __all__ = ["MAX_NODES_PER_REPLY", "MAX_VALUES_PER_REPLY", "Op", "ProtocolError", "decode", "encode"]
 
 MAX_NODES_PER_REPLY: Final[int] = 20
-MAX_VALUES_PER_REPLY: Final[int] = 8
+#: Una clave de canal tiene un registro por persona dentro: con 8, un canal
+#: de nueve mostraba a ocho. Las respuestas grandes ya viajan troceadas por
+#: los circuitos (ver `transport.frame`).
+MAX_VALUES_PER_REPLY: Final[int] = 32
 
 
 class Op(StrEnum):

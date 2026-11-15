@@ -17,6 +17,9 @@ Lo que eso implica, y conviene que esté escrito aquí y no sólo en la cabeza:
   N-1 envíos por mensaje. A partir de unas decenas haría falta otra cosa, y
   fingir que no sería mentir sobre la forma del problema.
 * **Estar en el canal es público** (ver `presence`). El contenido no.
+* **Apodos como en IRC.** Si al entrar alguien ya usa tu apodo, el tuyo pasa
+  a `apodo2`, `apodo3`… Lo conserva quien llegó antes; un empate se decide por
+  la clave, igual en las dos celdas, para que no cambien de nombre las dos.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from collections.abc import Callable
 from typing import Any, Final
 
 from nullcell.chat import presence
-from nullcell.chat.protocol import Message, MessageError, channel_name, clean_nick
+from nullcell.chat.protocol import MAX_NICK, Message, MessageError, channel_name, clean_nick
 from nullcell.core.identity import Identity
 
 __all__ = ["HISTORY", "Channel"]
@@ -61,6 +64,10 @@ class Channel:
         self.name = channel_name(name)
         self.identity = identity
         self.nick = clean_nick(nick, fallback=identity.short)
+        #: El apodo que se pidió; `nick` es el que se usa (puede llevar número).
+        self.wanted = self.nick
+        # Redondeada como se publica: compararla sin redondear rompería el desempate.
+        self.since = round(time.time(), 3)
         self.dht = dht
         self.service = service
         self.open_session = open_session
@@ -154,14 +161,48 @@ class Channel:
         """Vuelve a mirar quién está, se anuncia y conecta con los nuevos."""
         if self.dht is None:
             return 0
+        # Primero quién está, para no anunciarse con un apodo que ya tiene otro.
+        self.members = await presence.members(self.dht, self.name, exclude=self.identity.public_key)
+        self.resolve_nick()
         if self.service is not None:
             with contextlib.suppress(Exception):
                 await presence.announce(
-                    self.dht, self.identity, self.name, nick=self.nick, service=self.service
+                    self.dht,
+                    self.identity,
+                    self.name,
+                    nick=self.nick,
+                    service=self.service,
+                    since=self.since,
                 )
-        self.members = await presence.members(self.dht, self.name, exclude=self.identity.public_key)
+            with contextlib.suppress(Exception):
+                await presence.announce_directory(
+                    self.dht, self.identity, self.name, nick=self.nick
+                )
         await self._connect_to_new()
         return len(self.members)
+
+    def resolve_nick(self) -> str:
+        """Si alguien que llegó antes ya usa este apodo, toma el siguiente número.
+
+        Como en IRC: `ana` → `ana2` → `ana3`. Sólo cede quien llegó después
+        (o, a igual hora, la clave mayor), así que dos celdas que entran a la
+        vez con el mismo apodo no se renombran las dos.
+        """
+        yo = (self.since, self.identity.public_key)
+        antes = {m.nick.casefold() for m in self.members if (m.since, m.pub) < yo}
+        if self.nick.casefold() not in antes:
+            return self.nick
+        usados = {m.nick.casefold() for m in self.members}
+        n = 2
+        while True:
+            sufijo = str(n)
+            candidato = self.wanted[: MAX_NICK - len(sufijo)] + sufijo
+            if candidato.casefold() not in usados:
+                break
+            n += 1
+        log.info("el apodo %s ya está en #%s: pasas a %s", self.nick, self.name, candidato)
+        self.nick = candidato
+        return self.nick
 
     async def _connect_to_new(self) -> None:
         if self.open_session is None:
@@ -217,6 +258,7 @@ class Channel:
         return {
             "channel": self.name,
             "nick": self.nick,
+            "wanted": self.wanted,
             "address": self.identity.hostname,
             "members": [
                 {"nick": m.nick, "address": m.address, "connected": m.pub in self._sessions}

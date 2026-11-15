@@ -420,6 +420,16 @@ class LocalUI:
         self.bus.emit("chat.join", f"entraste en #{state['channel']} como {state['nick']}")
         return web.json_response(panel.chat_state())
 
+    async def _chat_channels(self, request: web.Request) -> web.StreamResponse:
+        return web.json_response({"channels": await self._panel().chat_channels()})
+
+    async def _chat_leave(self, request: web.Request) -> web.StreamResponse:
+        panel = self._panel()
+        if panel.chat is not None:
+            self.bus.emit("chat.leave", f"saliste de #{panel.chat.name}")
+        await panel.leave()
+        return web.json_response(panel.chat_state())
+
     async def _chat_say(self, request: web.Request) -> web.StreamResponse:
         panel = self._panel()
         body = await _json_body(request)
@@ -471,6 +481,8 @@ class LocalUI:
                 web.get("/api/chat", self._chat_state),
                 web.post("/api/chat/join", self._chat_join),
                 web.post("/api/chat/say", self._chat_say),
+                web.get("/api/chat/channels", self._chat_channels),
+                web.post("/api/chat/leave", self._chat_leave),
             ]
         )
         return app

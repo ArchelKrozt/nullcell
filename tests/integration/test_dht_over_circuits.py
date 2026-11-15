@@ -14,12 +14,14 @@ import socket
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+from nullcell.core.frames import RelayCmd
 from nullcell.core.identity import Identity
 from nullcell.dht import pow as P
+from nullcell.dht import protocol as proto
 from nullcell.dht import records as R
 from nullcell.dht.kademlia import KademliaNode
 from nullcell.dht.routing_table import Node
-from nullcell.dht.transport import CircuitTransport, DirectTransport, TransportError
+from nullcell.dht.transport import FRAMED, CircuitTransport, DirectTransport, TransportError
 from nullcell.net.listener import Listener
 from nullcell.onion import rendezvous
 from nullcell.onion.circuit import Hop
@@ -359,3 +361,124 @@ async def test_concurrent_lookups_over_one_circuit_each_get_their_own_answer():
             assert all(found == [] for found in resultados[len(nombres) :])
         finally:
             await client.close()
+
+
+# ------------------------------------------------- mensajes de más de una celda
+async def test_un_registro_grande_se_publica_y_se_lee_por_un_circuito():
+    """Una presencia de chat no cabe en una celda (496 bytes).
+
+    Antes, publicarla por circuito fallaba en silencio («publicada en 0
+    celdas») y pedir una clave con varios registros también: la respuesta no
+    cabía. Dos teléfonos en el mismo canal no se veían nunca.
+    """
+    async with mesh(3) as relays:
+        manager = CircuitManager()
+
+        async def path(node: Node) -> list[Hop]:
+            exit_hop = next(r.hop for r in relays if r.identity.public_key == node.pub)
+            return [exit_hop]
+
+        transport = CircuitTransport(path, manager)
+        client = KademliaNode(Identity.generate(), transport)
+        try:
+            for relay in relays:
+                client.table.add(relay.peer)
+            # Varios miembros, cada uno con un registro de más de una celda.
+            relleno = [{"pub": bytes(32), "x": bytes(32), "ep": ["203.0.113.9:4433"] * 3}] * 3
+            autores = [Identity.generate() for _ in range(6)]
+            for autor in autores:
+                body = {"ch": "general", "n": "x" * 24, "x": bytes(32), "ip": relleno}
+                record = await R.build(autor, R.RecordType.PRESENCE, body, ttl=300)
+                assert len(record.encode()) > 496
+                assert await client.store_record(record) >= 1
+
+            otro = KademliaNode(Identity.generate(), CircuitTransport(path, CircuitManager()))
+            try:
+                for relay in relays:
+                    otro.table.add(relay.peer)
+                found = await otro.find_value(R.channel_key("general"))
+                assert {r.pub for r in found} == {a.public_key for a in autores}
+            finally:
+                await otro.close()
+        finally:
+            await client.close()
+
+
+async def test_un_cliente_antiguo_sigue_entendiendose_con_un_relevo_nuevo():
+    """El formato de una celda, sin trocear, se sigue contestando igual."""
+    async with mesh(2) as relays:
+        owner = relays[1]
+        record = await R.build(owner.identity, R.RecordType.NAME, {"name": "antiguo"})
+        await owner.node.store_record(record)
+
+        manager = CircuitManager()
+        circuit = await manager.build([owner.hop])
+        respuesta: asyncio.Future = asyncio.get_running_loop().create_future()
+        circuit.on_data = lambda sid, rcmd, payload: (
+            respuesta.done() or respuesta.set_result(bytes(payload))
+        )
+        try:
+            pedido = proto.encode({"op": proto.Op.FIND_VALUE, "key": R.name_key("antiguo")})
+            await circuit.send_data(pedido, stream_id=1)
+            crudo = await asyncio.wait_for(respuesta, 10)
+            assert not crudo.startswith(FRAMED)  # contestado como lo entiende un cliente antiguo
+            assert proto.decode(crudo).get("values")
+        finally:
+            circuit.destroy()
+            await manager.close()
+
+
+async def test_con_una_salida_antigua_se_repite_en_el_formato_de_siempre():
+    """Una salida que no conoce el troceado contesta un error en una celda: el
+    cliente lo recuerda y repite la petición en el formato antiguo."""
+
+    class SalidaAntigua:
+        ready = True
+        should_retire = (False, "")
+        on_data = None
+
+        def __init__(self) -> None:
+            self.recibido: list[bytes] = []
+
+        async def send_data(self, data: bytes, *, stream_id: int) -> None:
+            self.recibido.append(data)
+            if data.startswith(FRAMED):
+                self.on_data(1, RelayCmd.DATA, proto.encode({"err": "no entiendo"}))
+            else:
+                self.on_data(1, RelayCmd.DATA, b"eco:" + data)
+
+        def destroy(self) -> None:
+            pass
+
+    nodo = Node(pub=b"\x07" * 32, endpoints=["198.51.100.1:4433"])
+    transport = CircuitTransport(lambda n: None, CircuitManager())
+    salida = SalidaAntigua()
+    transport._circuits[nodo.pub] = salida  # noqa: SLF001
+    assert await transport.rpc(nodo, b"hola", timeout=2) == b"eco:hola"
+    # La segunda ya va directa en el formato antiguo.
+    assert await transport.rpc(nodo, b"otra", timeout=2) == b"eco:otra"
+    assert sum(1 for d in salida.recibido if d.startswith(FRAMED)) == 1
+    # Y lo que no cabe en una celda no se intenta: se dice por qué.
+    with pytest.raises(TransportError, match="mensajes largos"):
+        await transport.rpc(nodo, b"x" * 600, timeout=2)
+    await transport.close()
+
+
+async def test_quien_ya_esta_en_un_canal_sigue_viendo_a_los_que_llegan():
+    """Lo primero que una celda guarda de un canal es su propia presencia.
+
+    Con el atajo de la caché, `find_value` devolvía eso y no preguntaba más:
+    nunca veía a quien entraba después. `fresh` pregunta siempre a la red.
+    """
+    async with mesh(3) as relays:
+        ana, beto = relays[1], relays[2]
+        for quien in (ana, beto):
+            body = {"ch": "general", "n": "x", "x": bytes(32), "ip": [{"pub": bytes(32)}]}
+            record = await R.build(quien.identity, R.RecordType.PRESENCE, body, ttl=300)
+            await quien.node.store_record(record)
+
+        clave = R.channel_key("general")
+        con_cache = await ana.node.find_value(clave)
+        fresca = await ana.node.find_value(clave, fresh=True)
+        assert {r.pub for r in fresca} == {ana.identity.public_key, beto.identity.public_key}
+        assert len(fresca) >= len(con_cache)

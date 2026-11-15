@@ -21,15 +21,87 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Protocol, runtime_checkable
+from typing import Final, Protocol, runtime_checkable
 
-from nullcell.core.frames import RelayCmd
+from nullcell.core.frames import RELAY_DATA_SIZE, RelayCmd
 from nullcell.dht.routing_table import Node
 from nullcell.net.link_manager import LinkManager
 from nullcell.onion.circuit import Circuit, Hop
 from nullcell.onion.service import CircuitManager
 
-__all__ = ["CircuitTransport", "DirectTransport", "Transport", "TransportError"]
+__all__ = [
+    "FRAMED",
+    "CircuitTransport",
+    "DirectTransport",
+    "Reassembler",
+    "Transport",
+    "TransportError",
+    "frame",
+]
+
+# ------------------------------------------------------------- troceado
+#: Un mensaje DHT por circuito cabía en **una** celda (496 bytes) y no había
+#: nada para los más largos: publicar una presencia de chat o pedir una clave
+#: con varios registros fallaba en silencio («publicada en 0 celdas»). Ahora
+#: viaja troceado: `FRAMED` + longitud (4 bytes) + mensaje, en tantas celdas
+#: como haga falta. Ningún mensaje CBOR del protocolo empieza por 0x00, así
+#: que un relevo distingue el formato nuevo del antiguo (una celda, sin
+#: prefijo), que se sigue entendiendo en los dos sentidos.
+FRAMED: Final[bytes] = b"\x00NCF"
+#: Más que esto no es una respuesta del DHT, es un intento de llenar memoria.
+MAX_FRAMED: Final[int] = 512 * 1024
+
+
+def frame(blob: bytes) -> list[bytes]:
+    """El mensaje con su cabecera, en trozos que caben en una celda."""
+    if len(blob) > MAX_FRAMED:
+        raise TransportError(f"mensaje DHT de {len(blob)} bytes: máximo {MAX_FRAMED}")
+    data = FRAMED + len(blob).to_bytes(4, "big") + blob
+    return [data[i : i + RELAY_DATA_SIZE] for i in range(0, len(data), RELAY_DATA_SIZE)]
+
+
+class Reassembler:
+    """Junta los trozos de un mensaje. `feed` devuelve el mensaje al completarse.
+
+    Si el primer trozo no lleva la cabecera, es el formato antiguo: una celda
+    es el mensaje entero, y `legacy` lo dice.
+    """
+
+    __slots__ = ("_buf", "_want", "legacy")
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+        self._want: int | None = None
+        self.legacy = False
+
+    @property
+    def idle(self) -> bool:
+        return self._want is None and not self._buf
+
+    def feed(self, chunk: bytes) -> bytes | None:
+        if self._want is None and not self._buf:
+            if not chunk.startswith(FRAMED):
+                self.legacy = True
+                return bytes(chunk)
+            self.legacy = False
+        self._buf += chunk
+        head = len(FRAMED) + 4
+        if self._want is None:
+            if len(self._buf) < head:
+                return None
+            self._want = int.from_bytes(self._buf[len(FRAMED) : head], "big")
+            if self._want > MAX_FRAMED:
+                self.reset()
+                raise TransportError("mensaje DHT troceado demasiado grande")
+        if len(self._buf) < head + self._want:
+            return None
+        message = bytes(self._buf[head : head + self._want])
+        self.reset()
+        return message
+
+    def reset(self) -> None:
+        self._buf.clear()
+        self._want = None
 
 
 class TransportError(Exception):
@@ -124,6 +196,8 @@ class CircuitTransport:
         #: 16 consultas a la vez (una por fragmento del índice): casi todas
         #: fallaban, y el nombre de un portal salía «no registrado».
         self._in_flight: dict[bytes, asyncio.Lock] = {}
+        #: Salidas que sólo entienden el formato antiguo (una celda, sin trocear).
+        self._legacy: set[bytes] = set()
 
     async def _circuit_for(self, node: Node, timeout: float) -> Circuit:
         """A warm circuit whose exit is *node*, built once (§7)."""
@@ -158,16 +232,43 @@ class CircuitTransport:
         except Exception as exc:
             raise TransportError(f"no circuit to {node.short}: {exc}") from exc
 
+        antiguo = node.pub in self._legacy
+        if antiguo and len(request) > RELAY_DATA_SIZE:
+            raise TransportError(f"{node.short} es de una versión que no acepta mensajes largos")
+        reply, legacy = await self._exchange(circuit, node, request, timeout, framed=not antiguo)
+        if legacy and not antiguo:
+            # Una salida antigua no entendió el formato troceado y contestó con
+            # un error en una sola celda. Se recuerda y, si cabe, se repite.
+            self._legacy.add(node.pub)
+            if len(request) > RELAY_DATA_SIZE:
+                raise TransportError(
+                    f"{node.short} es de una versión que no acepta mensajes largos"
+                )
+            reply, _ = await self._exchange(circuit, node, request, timeout, framed=False)
+        return reply
+
+    async def _exchange(
+        self, circuit: Circuit, node: Node, request: bytes, timeout: float, *, framed: bool
+    ) -> tuple[bytes, bool]:
         future: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
+        junta = Reassembler()
 
         def on_data(stream_id: int, rcmd: int, payload: bytes) -> None:
-            if rcmd == RelayCmd.DATA and not future.done():
-                future.set_result(bytes(payload))
+            if rcmd != RelayCmd.DATA or future.done():
+                return
+            try:
+                message = junta.feed(bytes(payload))
+            except TransportError as exc:
+                future.set_exception(exc)
+                return
+            if message is not None:
+                future.set_result(message)
 
         circuit.on_data = on_data
         try:
-            await circuit.send_data(request, stream_id=self.stream_id)
-            return await asyncio.wait_for(future, timeout)
+            for chunk in frame(request) if framed else [request]:
+                await circuit.send_data(chunk, stream_id=self.stream_id)
+            return await asyncio.wait_for(future, timeout), junta.legacy
         except TimeoutError as exc:
             raise TransportError(f"{node.short} did not answer within {timeout} s") from exc
         except Exception as exc:

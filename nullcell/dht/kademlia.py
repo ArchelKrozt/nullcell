@@ -91,18 +91,48 @@ class KademliaNode:
         caller travels with it, which is the whole of decision 8.
         """
 
+        from nullcell.dht.transport import Reassembler, TransportError
+
+        # Un mensaje puede llegar en varias celdas (ver `transport.frame`):
+        # se junta por tramo de circuito. El cliente manda uno a la vez por
+        # circuito, así que basta un acumulador por tramo.
+        juntas: dict[int, Reassembler] = {}
+
         def handle(leg, header) -> bool:
             if header.rcmd != RelayCmd.DATA:
                 return False
-            asyncio.ensure_future(self._answer_over_circuit(relay, leg, header.payload))
+            if id(leg) not in juntas and len(juntas) > 4096:
+                juntas.clear()  # tramos que murieron a medio mensaje: no crecer sin fin
+            junta = juntas.setdefault(id(leg), Reassembler())
+            try:
+                request = junta.feed(bytes(header.payload))
+            except TransportError as exc:
+                log.debug("mensaje DHT descartado: %s", exc)
+                juntas.pop(id(leg), None)
+                return True
+            if request is not None:
+                juntas.pop(id(leg), None)
+                framed = not junta.legacy
+                asyncio.ensure_future(self._answer_over_circuit(relay, leg, request, framed=framed))
             return True
 
         return handle
 
-    async def _answer_over_circuit(self, relay, leg, request: bytes) -> None:
+    async def _answer_over_circuit(
+        self, relay, leg, request: bytes, *, framed: bool = False
+    ) -> None:
+        from nullcell.dht.transport import frame
+
         reply = await self._handle(request)
-        if reply is not None:
-            relay.send_back(leg, RelayCmd.DATA, reply, stream_id=1)
+        if reply is None:
+            return
+        try:
+            # Se contesta en el mismo formato en que se preguntó: un cliente
+            # antiguo sólo sabe leer una celda.
+            for chunk in frame(reply) if framed else [reply]:
+                relay.send_back(leg, RelayCmd.DATA, chunk, stream_id=1)
+        except Exception as exc:  # noqa: BLE001 - una respuesta que no cabe no tumba el relevo
+            log.debug("no se pudo contestar por el circuito: %s", exc)
 
     async def _handle(self, blob: bytes) -> bytes | None:
         self.stats["rpc_in"] += 1
@@ -370,18 +400,26 @@ class KademliaNode:
         nodes, _ = await self._lookup(target, want_value=False)
         return nodes
 
-    async def find_value(self, key: bytes, *, want: RecordType | None = None) -> list[Record]:
+    async def find_value(
+        self, key: bytes, *, want: RecordType | None = None, fresh: bool = False
+    ) -> list[Record]:
         """Fetch records under *key*, verifying every one before returning it.
 
         ``want`` says which type the caller is after. Bajo `routing_key(pub)`
         conviven el descriptor de relevo y el de portal de una misma celda, así
         que «tengo algo en caché» no significa «tengo lo que buscas»: sin esto,
         quien ya había aprendido el relevo nunca encontraba el portal.
+
+        ``fresh`` pregunta a la red aunque haya algo en local, y junta las dos
+        cosas. Hace falta en claves que cambian a cada minuto y tienen muchos
+        publicadores —quién está en un canal—: lo primero que se guarda en
+        local es la propia presencia, y con el atajo nadie volvía a preguntar
+        quién más había.
         """
         local = self.store.get(key)
         if want is not None:
             local = [r for r in local if r.type is want]
-        if local:
+        if local and not fresh:
             return local
 
         _, blobs = await self._lookup(key, want_value=True)
@@ -402,6 +440,8 @@ class KademliaNode:
             found.append(record)
             with contextlib.suppress(StoreFull):
                 self.store.put(record, blob=blob, pow_bits=pow_bits)  # cache it (§7)
+        if fresh:
+            found.extend(r for r in local if (r.pub, r.type) not in seen)
         return found
 
     async def store_record(self, record: Record) -> int:

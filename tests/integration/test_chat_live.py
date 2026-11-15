@@ -31,7 +31,7 @@ class FakeDHT:
         self.store.setdefault(record.key, []).append(record)
         return 1
 
-    async def find_value(self, key: bytes) -> list:
+    async def find_value(self, key: bytes, **_) -> list:
         return list(self.store.get(key, []))
 
 
@@ -158,3 +158,87 @@ async def test_closing_a_channel_releases_its_sessions():
     with contextlib.suppress(Exception):
         await canal.close()
     assert cerradas == [True]
+
+
+# ---------------------------------------------------------------- directorio y apodos
+
+
+class _Servicio:
+    x25519_public = b"\x01" * 32
+    intro_points = [{"pub": b"\x02" * 32, "x": b"\x03" * 32, "ep": ["203.0.113.9:4433"]}]
+
+
+async def test_el_directorio_lista_los_canales_con_gente():
+    """Se pueden ver los canales que hay sin conocer sus nombres."""
+    dht = FakeDHT()
+    ana, beto, caro = Identity.generate(), Identity.generate(), Identity.generate()
+    await presence.announce_directory(dht, ana, "#General", nick="ana")
+    await presence.announce_directory(dht, beto, "general", nick="beto")
+    await presence.announce_directory(dht, caro, "#musica", nick="caro")
+
+    canales = await presence.channels(dht)
+    assert canales == [{"channel": "general", "members": 2}, {"channel": "musica", "members": 1}]
+
+
+async def test_cambiar_de_canal_no_cuenta_dos_veces_en_el_directorio():
+    dht = FakeDHT()
+    ana = Identity.generate()
+    await presence.announce_directory(dht, ana, "general", nick="ana")
+    # El registro nuevo lleva una fecha posterior: es el que vale.
+    await asyncio.sleep(1.1)
+    await presence.announce_directory(dht, ana, "musica", nick="ana")
+    assert await presence.channels(dht) == [{"channel": "musica", "members": 1}]
+
+
+async def test_nadie_puede_entrar_al_directorio_como_si_fuera_un_canal():
+    from nullcell.chat.protocol import MessageError
+
+    with pytest.raises(MessageError):
+        Channel(presence.DIRECTORY, Identity.generate())
+
+
+async def test_un_apodo_repetido_toma_el_siguiente_numero():
+    """Como en IRC: si «ana» ya está, quien llega después es «ana2»."""
+    dht = FakeDHT()
+    primera, segunda, tercera = Identity.generate(), Identity.generate(), Identity.generate()
+
+    canal_1 = Channel("general", primera, nick="ana", dht=dht, service=_Servicio())
+    await canal_1.refresh()
+    assert canal_1.nick == "ana"
+
+    canal_2 = Channel("general", segunda, nick="Ana", dht=dht, service=_Servicio())
+    await canal_2.refresh()
+    assert canal_2.nick == "Ana2"
+    assert canal_2.describe()["wanted"] == "Ana"
+
+    canal_3 = Channel("general", tercera, nick="ana", dht=dht, service=_Servicio())
+    await canal_3.refresh()
+    assert canal_3.nick == "ana3"
+
+    # Quien llegó primero no cambia al ver a los demás.
+    await canal_1.refresh()
+    assert canal_1.nick == "ana"
+
+
+async def test_dos_que_entran_a_la_vez_no_se_renombran_los_dos():
+    dht = FakeDHT()
+    a, b = Identity.generate(), Identity.generate()
+    canal_a = Channel("general", a, nick="neo", dht=dht, service=_Servicio())
+    canal_b = Channel("general", b, nick="neo", dht=dht, service=_Servicio())
+    canal_b.since = canal_a.since  # misma hora exacta: decide la clave
+    await canal_a.refresh()
+    await canal_b.refresh()
+    await canal_a.refresh()
+    assert sorted([canal_a.nick, canal_b.nick]) == ["neo", "neo2"]
+
+
+async def test_un_apodo_largo_deja_sitio_al_numero():
+    from nullcell.chat.protocol import MAX_NICK
+
+    dht = FakeDHT()
+    largo = "x" * MAX_NICK
+    c1 = Channel("general", Identity.generate(), nick=largo, dht=dht, service=_Servicio())
+    await c1.refresh()
+    c2 = Channel("general", Identity.generate(), nick=largo, dht=dht, service=_Servicio())
+    await c2.refresh()
+    assert c2.nick == "x" * (MAX_NICK - 1) + "2"

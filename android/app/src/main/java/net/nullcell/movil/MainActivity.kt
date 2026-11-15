@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -47,6 +49,7 @@ import net.nullcell.movil.ui.C
 import net.nullcell.movil.ui.DialogoActualizacion
 import net.nullcell.movil.ui.PantallaAjustes
 import net.nullcell.movil.ui.PantallaBuscar
+import net.nullcell.movil.ui.PantallaChat
 import net.nullcell.movil.ui.PantallaInicio
 import net.nullcell.movil.ui.PantallaNavegador
 import net.nullcell.movil.ui.PantallaSemillas
@@ -92,6 +95,7 @@ class MainActivity : ComponentActivity() {
     private fun App() {
         val estado by Nodo.estado.collectAsStateWithLifecycle()
         val semillas by Nodo.semillas.collectAsStateWithLifecycle()
+        val sinLeer by Nodo.sinLeer.collectAsStateWithLifecycle()
         var pestana by remember { mutableStateOf(if (invitacion != null) Pestana.SEMILLAS else Pestana.INICIO) }
         var destino by remember { mutableStateOf<String?>(null) }
         val avisos = remember { SnackbarHostState() }
@@ -111,8 +115,14 @@ class MainActivity : ComponentActivity() {
                         NavigationBarItem(
                             selected = pestana == p,
                             onClick = { pestana = p },
-                            icon = { Icon(p.icono, p.titulo) },
-                            label = { Text(p.titulo) },
+                            icon = {
+                                // Seis pestañas: la etiqueta sólo en la elegida, para que quepan.
+                                if (p == Pestana.CHAT && sinLeer > 0 && pestana != Pestana.CHAT)
+                                    BadgedBox(badge = { Badge(containerColor = C.magenta) { Text(if (sinLeer > 99) "99+" else "$sinLeer") } }) { Icon(p.icono, p.titulo) }
+                                else Icon(p.icono, p.titulo)
+                            },
+                            label = { Text(p.titulo, maxLines = 1) },
+                            alwaysShowLabel = false,
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = C.fondo, indicatorColor = C.cian,
                                 selectedTextColor = C.cian, unselectedIconColor = C.tenue, unselectedTextColor = C.tenue,
@@ -128,6 +138,7 @@ class MainActivity : ComponentActivity() {
                         Pestana.INICIO -> PantallaInicio(estado, semillas, abrir, { pestana = it }, ::compartir) { Nodo.arrancar() }
                         Pestana.BUSCAR -> PantallaBuscar(abrir)
                         Pestana.NAVEGAR -> PantallaNavegador(destino, estado.anonimo, ::compartir, avisar)
+                        Pestana.CHAT -> PantallaChat(estado, avisar)
                         Pestana.SEMILLAS -> PantallaSemillas(semillas, avisar, ::compartir, invitacion) { invitacion = null }
                         Pestana.AJUSTES -> PantallaAjustes(estado, avisar) {
                             stopService(Intent(this@MainActivity, NodoService::class.java))

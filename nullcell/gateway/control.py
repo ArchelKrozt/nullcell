@@ -723,6 +723,9 @@ class ControlPanel:
             raise ControlError(str(bad)) from None
 
         self.chat.on_message = self._on_chat_message
+        # Al cambiar de canal el servicio ya existe y `_chat_service` no hace
+        # nada: sin esto el canal nuevo no se anunciaba y nadie te veía.
+        self.chat.service = self._chat_service_obj
         self.chat.spawn(self.runtime)
         await self._chat_service()
         return self.chat.describe()
@@ -783,6 +786,39 @@ class ControlPanel:
         except MessageError as bad:
             raise ControlError(str(bad)) from None
         return self.chat.describe()
+
+    async def leave(self) -> None:
+        """Sale del canal. La presencia publicada caduca sola en minutos (TTL)."""
+        if self.chat is not None:
+            await self.chat.close()
+        self.chat = None
+        if self._chat_service_obj is not None:
+            with contextlib.suppress(Exception):
+                await self._chat_service_obj.close()
+        self._chat_service_obj = None
+
+    async def chat_channels(self) -> list[dict[str, Any]]:
+        """Los canales con gente dentro, según el directorio del DHT.
+
+        El tuyo sale siempre, aunque el directorio aún no lo refleje: acabas de
+        anunciarte y el DHT tarda un momento en contestar con lo nuevo.
+        """
+        from nullcell.chat import presence
+
+        try:
+            found = await presence.channels(self.runtime.node)
+        except Exception:  # noqa: BLE001 - sin red, la lista vacía es la respuesta honesta
+            found = []
+        if self.chat is not None:
+            mine = next((c for c in found if c["channel"] == self.chat.name), None)
+            here = len(self.chat.members) + 1
+            if mine is None:
+                found.insert(0, {"channel": self.chat.name, "members": here})
+            else:
+                mine["members"] = max(mine["members"], here)
+            for c in found:
+                c["joined"] = c["channel"] == self.chat.name
+        return found
 
     def chat_state(self, limit: int = 100) -> dict[str, Any]:
         if self.chat is None:
